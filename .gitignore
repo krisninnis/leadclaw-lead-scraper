@@ -1,0 +1,30 @@
+.vercel
+.env*.local
+.env
+.env.local
+.env.production
+.env.production.local
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+
+# Environment variables
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Output files
+output/
+data/
