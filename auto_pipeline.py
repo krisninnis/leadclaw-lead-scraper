@@ -9,11 +9,11 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-OUTREACH_BASE_URL = os.getenv("OUTREACH_BASE_URL", "https://leadclawai.vercel.app").rstrip("/")
+OUTREACH_BASE_URL = os.getenv("OUTREACH_BASE_URL", "https://leadclaw.uk").rstrip("/")
 OUTREACH_RUN_TOKEN = os.getenv("OUTREACH_RUN_TOKEN", "").strip()
 PYTHON_BIN = os.getenv("PYTHON_BIN", os.sys.executable)
 PLACES_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
@@ -24,7 +24,10 @@ SCRAPER_DAILY_NEW_CAP = int(os.getenv("SCRAPER_DAILY_NEW_CAP", "40"))
 def run_places_batch(limit: int, cities: list[str], niches: list[str]):
     city_args = " ".join(cities)
     niche_args = " ".join(niches)
-    cmd = f'"{PYTHON_BIN}" places_batch.py --limit {limit} --cities {city_args} --niches {niche_args}'
+    cmd = (
+        f'"{PYTHON_BIN}" places_batch.py --limit {limit} '
+        f"--cities {city_args} --niches {niche_args}"
+    )
     print(f"[pipeline] running: {cmd}")
     code = os.system(cmd)
     if code != 0:
@@ -62,9 +65,15 @@ def outreach_remaining_today(default_cap: int = 20):
     sb = supabase_client()
     cap = default_cap
     cfg_rows = []
+
     try:
         cfg_rows = (
-            sb.table("ops_config").select("key,value").eq("key", "OUTREACH_DAILY_CAP").limit(1).execute().data
+            sb.table("ops_config")
+            .select("key,value")
+            .eq("key", "OUTREACH_DAILY_CAP")
+            .limit(1)
+            .execute()
+            .data
             or []
         )
     except Exception:
@@ -76,7 +85,12 @@ def outreach_remaining_today(default_cap: int = 20):
         except Exception:
             cap = default_cap
 
-    since = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    since = (
+        datetime.now(timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .isoformat()
+    )
+
     sent_rows = (
         sb.table("outreach_events")
         .select("id")
@@ -88,15 +102,22 @@ def outreach_remaining_today(default_cap: int = 20):
         .data
         or []
     )
+
     sent_today = len(sent_rows)
     remaining = max(0, cap - sent_today)
-    print(f"[pipeline] outreach quota: sent_today={sent_today} cap={cap} remaining={remaining}")
+
+    print(
+        f"[pipeline] outreach quota: sent_today={sent_today} "
+        f"cap={cap} remaining={remaining}"
+    )
+
     return {"cap": cap, "sentToday": sent_today, "remaining": remaining}
 
 
 def enforce_daily_new_cap(cap: int):
     sb = supabase_client()
     since = iso_hours_ago(24)
+
     rows = (
         sb.table("leads")
         .select("id,score,created_at")
@@ -114,11 +135,26 @@ def enforce_daily_new_cap(cap: int):
         return {"new24h": len(rows), "paused": 0}
 
     overflow = rows[cap:]
-    overflow_ids = [r["id"] for r in overflow if r.get("id")]
-    if overflow_ids:
-        sb.table("leads").update({"status": "paused_free_cap", "updated_at": datetime.now(timezone.utc).isoformat()}).in_("id", overflow_ids).execute()
+    overflow_ids = [row["id"] for row in overflow if row.get("id")]
 
-    print(f"[pipeline] daily cap enforced: new_24h={len(rows)} cap={cap} paused={len(overflow_ids)}")
+    if overflow_ids:
+        (
+            sb.table("leads")
+            .update(
+                {
+                    "status": "paused_free_cap",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .in_("id", overflow_ids)
+            .execute()
+        )
+
+    print(
+        f"[pipeline] daily cap enforced: new_24h={len(rows)} "
+        f"cap={cap} paused={len(overflow_ids)}"
+    )
+
     return {"new24h": len(rows), "paused": len(overflow_ids)}
 
 
@@ -144,14 +180,33 @@ def dedupe_recent_new_leads(hours: int = 48):
     for _, rows in grouped.items():
         if len(rows) < 2:
             continue
-        rows.sort(key=lambda r: (int(r.get("score") or 0), r.get("created_at") or ""), reverse=True)
-        for dup in rows[1:]:
-            duplicates.append(dup["id"])
+
+        rows.sort(
+            key=lambda row: (int(row.get("score") or 0), row.get("created_at") or ""),
+            reverse=True,
+        )
+
+        for duplicate in rows[1:]:
+            duplicates.append(duplicate["id"])
 
     if duplicates:
-        sb.table("leads").update({"status": "duplicate", "updated_at": datetime.now(timezone.utc).isoformat()}).in_("id", duplicates).execute()
+        (
+            sb.table("leads")
+            .update(
+                {
+                    "status": "duplicate",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            .in_("id", duplicates)
+            .execute()
+        )
 
-    print(f"[pipeline] dedupe complete: checked={len(data)} duplicates_marked={len(duplicates)}")
+    print(
+        f"[pipeline] dedupe complete: checked={len(data)} "
+        f"duplicates_marked={len(duplicates)}"
+    )
+
     return {"checked": len(data), "duplicates": len(duplicates)}
 
 
@@ -160,7 +215,15 @@ def enrich_emails():
     print(f"[pipeline] running: {cmd}")
     code = os.system(cmd)
     if code != 0:
-      print(f"[pipeline] enrich warnings: exit={code}")
+        print(f"[pipeline] enrich warnings: exit={code}")
+
+
+def generate_outreach_messages():
+    cmd = f'"{PYTHON_BIN}" generate_outreach_messages.py'
+    print(f"[pipeline] running: {cmd}")
+    code = os.system(cmd)
+    if code != 0:
+        print(f"[pipeline] outreach message generation warnings: exit={code}")
 
 
 def trigger_outreach():
@@ -169,13 +232,26 @@ def trigger_outreach():
         return {"ok": False, "reason": "missing_token"}
 
     url = f"{OUTREACH_BASE_URL}/api/outreach/run"
-    resp = requests.post(url, headers={"Authorization": f"Bearer {OUTREACH_RUN_TOKEN}"}, timeout=60)
-    if resp.status_code >= 400:
-        print(f"[pipeline] outreach failed: {resp.status_code} {resp.text}")
-        return {"ok": False, "reason": resp.text, "status": resp.status_code}
 
-    data = resp.json()
-    print(f"[pipeline] outreach ok: sent={data.get('sentCount', 0)} skipped={data.get('skippedCount', 0)}")
+    try:
+        response = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {OUTREACH_RUN_TOKEN}"},
+            timeout=60,
+        )
+    except requests.RequestException as exc:
+        print(f"[pipeline] outreach failed: request error: {exc}")
+        return {"ok": False, "reason": str(exc), "status": None}
+
+    if response.status_code >= 400:
+        print(f"[pipeline] outreach failed: {response.status_code} {response.text}")
+        return {"ok": False, "reason": response.text, "status": response.status_code}
+
+    data = response.json()
+    print(
+        f"[pipeline] outreach ok: sent={data.get('sentCount', 0)} "
+        f"skipped={data.get('skippedCount', 0)}"
+    )
     return {"ok": True, **data}
 
 
@@ -210,9 +286,20 @@ def main():
     outreach = {"ok": None, "reason": "skipped"}
     if not args.skip_outreach:
         enrich_emails()
+        generate_outreach_messages()
         outreach = trigger_outreach()
 
-    print({"ok": True, "freeTier": FREE_TIER_MODE, "quota": quota, "cap": cap, "dedupe": dedupe, "outreach": outreach})
+    print(
+        {
+            "ok": True,
+            "freeTier": FREE_TIER_MODE,
+            "quota": quota,
+            "cap": cap,
+            "dedupe": dedupe,
+            "outreach_messages_generated": not args.skip_outreach,
+            "outreach": outreach,
+        }
+    )
 
 
 if __name__ == "__main__":
