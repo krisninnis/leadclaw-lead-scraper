@@ -270,9 +270,7 @@ def main():
         quota = outreach_remaining_today(20)
 
     if not args.skip_scrape:
-        if FREE_TIER_MODE and quota.get("remaining", 0) <= 0:
-            print("[pipeline] scrape skipped: outreach daily cap already reached")
-        elif not PLACES_KEY:
+        if not PLACES_KEY:
             print("[pipeline] scrape skipped: GOOGLE_PLACES_API_KEY missing")
         else:
             run_places_batch(args.limit, args.cities, args.niches)
