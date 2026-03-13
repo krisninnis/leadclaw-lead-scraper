@@ -5,7 +5,7 @@ $logDir = 'C:\Users\KRIS\.openclaw\workspace\logs'
 if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 
 Push-Location $base
-$cmd = '"' + $python + '" auto_pipeline.py --limit 4 --cities London Manchester --niches beauty 2>&1'
+$cmd = '"' + $python + '" auto_pipeline.py --limit 6 --cities London Manchester Birmingham Leeds Liverpool Bristol Nottingham Leicester Newcastle Sheffield --niches beauty aesthetics skin laser cosmetic 2>&1'
 $out = cmd /c $cmd
 $exit = $LASTEXITCODE
 Pop-Location
