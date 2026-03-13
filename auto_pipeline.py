@@ -20,6 +20,36 @@ PLACES_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
 FREE_TIER_MODE = os.getenv("FREE_TIER_MODE", "1").strip() != "0"
 SCRAPER_DAILY_NEW_CAP = int(os.getenv("SCRAPER_DAILY_NEW_CAP", "40"))
 
+DEFAULT_CITY_POOL = [
+    "London",
+    "Manchester",
+    "Birmingham",
+    "Leeds",
+    "Liverpool",
+    "Bristol",
+    "Nottingham",
+    "Leicester",
+    "Newcastle",
+    "Sheffield",
+]
+
+DEFAULT_NICHES = ["beauty"]
+ROTATING_CITY_BATCH_SIZE = 3
+
+
+def get_rotating_cities(pool: list[str], batch_size: int) -> list[str]:
+    if not pool:
+        return ["London", "Manchester"]
+
+    day_index = datetime.now(timezone.utc).toordinal()
+    start = (day_index * batch_size) % len(pool)
+
+    selected = []
+    for i in range(min(batch_size, len(pool))):
+        selected.append(pool[(start + i) % len(pool)])
+
+    return selected
+
 
 def run_places_batch(limit: int, cities: list[str], niches: list[str]):
     city_args = " ".join(cities)
@@ -261,9 +291,18 @@ def main():
     parser.add_argument("--skip-outreach", action="store_true")
     parser.add_argument("--limit", type=int, default=4, help="per places_batch job")
     parser.add_argument("--dedupe-hours", type=int, default=72)
-    parser.add_argument("--cities", nargs="*", default=["London", "Manchester"])
-    parser.add_argument("--niches", nargs="*", default=["beauty"])
+    parser.add_argument("--cities", nargs="*", default=None)
+    parser.add_argument("--niches", nargs="*", default=None)
     args = parser.parse_args()
+
+    selected_cities = args.cities or get_rotating_cities(
+        DEFAULT_CITY_POOL, ROTATING_CITY_BATCH_SIZE
+    )
+    selected_niches = args.niches or DEFAULT_NICHES
+
+    print(
+        f"[pipeline] selected coverage: cities={selected_cities} niches={selected_niches}"
+    )
 
     quota = {"cap": None, "sentToday": None, "remaining": None}
     if FREE_TIER_MODE:
@@ -273,7 +312,7 @@ def main():
         if not PLACES_KEY:
             print("[pipeline] scrape skipped: GOOGLE_PLACES_API_KEY missing")
         else:
-            run_places_batch(args.limit, args.cities, args.niches)
+            run_places_batch(args.limit, selected_cities, selected_niches)
 
     dedupe = dedupe_recent_new_leads(args.dedupe_hours)
 
@@ -295,6 +334,8 @@ def main():
             "cap": cap,
             "dedupe": dedupe,
             "outreach_messages_generated": not args.skip_outreach,
+            "selected_cities": selected_cities,
+            "selected_niches": selected_niches,
             "outreach": outreach,
         }
     )
