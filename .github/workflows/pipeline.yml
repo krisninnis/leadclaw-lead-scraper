@@ -1,0 +1,37 @@
+name: LeadClaw Scraper Pipeline
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          OUTREACH_BASE_URL: ${{ secrets.OUTREACH_BASE_URL }}
+          OUTREACH_RUN_TOKEN: ${{ secrets.OUTREACH_RUN_TOKEN }}
+          FREE_TIER_MODE: ${{ secrets.FREE_TIER_MODE }}
+          SCRAPER_DAILY_NEW_CAP: ${{ secrets.SCRAPER_DAILY_NEW_CAP }}
+        run: |
+          python auto_pipeline.py
