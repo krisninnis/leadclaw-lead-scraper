@@ -32,36 +32,50 @@ BLOCKED_EMAIL_PREFIXES = [
     "do-not-reply@",
 ]
 
+# -----------------------------
+# NEW DEMO-LED TEMPLATES
+# -----------------------------
+
 TEMPLATE_NO_CHAT = (
-    "Hi, I came across {business}{city_hint} and noticed the website may be missing enquiries "
-    "from people visiting while staff are busy or out of hours.\n\n"
-    "LeadClaw helps clinics capture those missed enquiries with a simple website widget and a "
-    "lead inbox for fast follow-up.\n\n"
-    "You can see a quick demo here:\n"
+    "Hi, I came across {business}{city_hint} and wanted to reach out.\n\n"
+    "I'm building LeadClaw, a brand-new startup for clinics that helps capture website enquiries when staff are busy or out of hours.\n\n"
+    "It's free to get started, with an optional paid subscription later, and there's a no-obligation free trial as well.\n\n"
+    "I put together a quick demo for your clinic here:\n"
     "{demo_url}\n\n"
-    "No rebuild is needed — just a small script added to the site.\n\n"
-    "If useful, the team at LeadClaw can send over a quick setup link."
+    "Because we're still early, we're improving the product constantly and listening closely to feedback.\n\n"
+    "We're also giving the first 100 clients founding-client perks like priority support, early feature access, and future benefits that won't be offered once we grow.\n\n"
+    "Worth a quick look?\n\n"
+    "Best,\n"
+    "Kris\n"
+    "LeadClaw"
 )
 
 TEMPLATE_CONTACT_FORM_ONLY = (
-    "Hi, I came across {business}{city_hint} and noticed the site appears to rely on a contact form "
-    "rather than a live website enquiry widget.\n\n"
-    "That often means some visitors leave before enquiring.\n\n"
-    "LeadClaw helps clinics capture those missed enquiries with a simple website widget and a "
-    "lead inbox for fast follow-up.\n\n"
-    "You can see a quick demo here:\n"
+    "Hi, I came across {business}{city_hint} and noticed the site appears to rely mainly on a contact form.\n\n"
+    "I'm building LeadClaw, a brand-new startup for clinics that helps capture and convert more website enquiries before visitors drop off.\n\n"
+    "It's free to get started, with an optional paid subscription later, and there's a no-obligation free trial too.\n\n"
+    "I put together a quick demo for your clinic here:\n"
     "{demo_url}\n\n"
-    "If useful, the team at LeadClaw can send over a quick setup link."
+    "Because the product is still early, we're shipping updates continuously and taking real feedback from clinics seriously.\n\n"
+    "The first 100 clients will also get founding-client perks like priority support, early access to future features, and extra benefits we won't offer later.\n\n"
+    "Worth a quick look?\n\n"
+    "Best,\n"
+    "Kris\n"
+    "LeadClaw"
 )
 
 TEMPLATE_WEAK_BOOKING = (
-    "Hi, I came across {business}{city_hint} and noticed there may be some booking friction on the website.\n\n"
-    "LeadClaw helps clinics capture those missed enquiries with a simple website widget and a "
-    "lead inbox for fast follow-up.\n\n"
-    "You can see a quick demo here:\n"
+    "Hi, I came across {business}{city_hint} and noticed there may be some friction in the booking journey.\n\n"
+    "I'm building LeadClaw, a brand-new startup for clinics that helps capture missed enquiries and make follow-up easier.\n\n"
+    "It's free to get started, with an optional paid subscription later, and there's a no-obligation free trial available.\n\n"
+    "I put together a quick demo for your clinic here:\n"
     "{demo_url}\n\n"
-    "No rebuild is needed.\n\n"
-    "If useful, the team at LeadClaw can send over a quick setup link."
+    "We're still in the early stage, which means the product is improving all the time and early users get a real chance to shape what we build.\n\n"
+    "The first 100 clients will also get founding-client perks like priority support, early feature access, and future benefits that won't be available once LeadClaw grows.\n\n"
+    "Worth a quick look?\n\n"
+    "Best,\n"
+    "Kris\n"
+    "LeadClaw"
 )
 
 
