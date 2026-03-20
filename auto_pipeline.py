@@ -1,9 +1,11 @@
 import argparse
 import json
 import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -12,15 +14,16 @@ load_dotenv(BASE_DIR / ".env")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-OUTREACH_BASE_URL = os.getenv("OUTREACH_BASE_URL", "https://leadclaw.uk").rstrip("/")
+
+OUTREACH_BASE_URL = os.getenv("OUTREACH_BASE_URL", "https://www.leadclaw.uk").rstrip("/")
 OUTREACH_RUN_TOKEN = os.getenv("OUTREACH_RUN_TOKEN", "").strip()
+
 PYTHON_BIN = os.getenv("PYTHON_BIN", os.sys.executable)
 PLACES_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "").strip()
+
 FREE_TIER_MODE = os.getenv("FREE_TIER_MODE", "1").strip() != "0"
 SCRAPER_DAILY_NEW_CAP = int((os.getenv("SCRAPER_DAILY_NEW_CAP") or "40").strip())
 
-# Keep the scraper UK-focused for now.
-# Later, you can switch TARGET_MARKET to "english_speaking" to expand.
 TARGET_MARKET = (os.getenv("TARGET_MARKET") or "uk").strip().lower()
 
 CITY_POOLS = {
@@ -47,7 +50,6 @@ CITY_POOLS = {
         "Derby",
     ],
     "english_speaking": [
-        # UK
         "London",
         "Manchester",
         "Birmingham",
@@ -58,25 +60,20 @@ CITY_POOLS = {
         "Edinburgh",
         "Cardiff",
         "Belfast",
-        # Ireland
         "Dublin",
         "Cork",
         "Galway",
-        # Australia
         "Sydney",
         "Melbourne",
         "Brisbane",
         "Perth",
-        # New Zealand
         "Auckland",
         "Wellington",
         "Christchurch",
-        # Canada
         "Toronto",
         "Vancouver",
         "Calgary",
         "Ottawa",
-        # US
         "New York",
         "Los Angeles",
         "Chicago",
@@ -116,23 +113,6 @@ def get_rotating_cities(pool: list[str], batch_size: int) -> list[str]:
     return selected
 
 
-def run_places_batch(limit: int, cities: list[str], niches: list[str]):
-    city_args = " ".join(cities)
-    niche_args = " ".join(niches)
-    cmd = f'"{PYTHON_BIN}" places_batch.py --limit {limit} --cities {city_args} --niches {niche_args}'
-    log_event(
-        "places_batch_start",
-        limit=limit,
-        cities=cities,
-        niches=niches,
-        command=cmd,
-    )
-    code = os.system(cmd)
-    if code != 0:
-        raise RuntimeError(f"places_batch failed with code {code}")
-    log_event("places_batch_finish", limit=limit, cities=cities, niches=niches)
-
-
 def supabase_client():
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
@@ -158,9 +138,82 @@ def current_new_leads_24h():
     return len(rows)
 
 
+def run_python_script(script_name: str, *args: str):
+    cmd = [PYTHON_BIN, script_name, *args]
+    log_event("script_start", script=script_name, command=cmd)
+
+    result = subprocess.run(
+        cmd,
+        cwd=BASE_DIR,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.stdout.strip():
+        print(result.stdout.strip())
+
+    if result.stderr.strip():
+        print(result.stderr.strip())
+
+    if result.returncode != 0:
+        raise RuntimeError(f"{script_name} failed with code {result.returncode}")
+
+    log_event("script_finish", script=script_name, returncode=result.returncode)
+
+
+def run_places_batch(limit: int, cities: list[str], niches: list[str]):
+    args = ["--limit", str(limit)]
+
+    if cities:
+        args.extend(["--cities", *cities])
+
+    if niches:
+        args.extend(["--niches", *niches])
+
+    run_python_script("places_batch.py", *args)
+
+
+def run_enrich():
+    run_python_script("enrich_emails.py")
+
+
+def run_generate_messages():
+    run_python_script("generate_outreach_messages.py")
+
+
+def trigger_outreach():
+    if not OUTREACH_BASE_URL:
+        log_event("outreach_trigger_skipped", reason="missing_outreach_base_url")
+        return
+
+    if not OUTREACH_RUN_TOKEN:
+        log_event("outreach_trigger_skipped", reason="missing_outreach_run_token")
+        return
+
+    url = f"{OUTREACH_BASE_URL}/api/outreach/run"
+    headers = {
+        "Authorization": f"Bearer {OUTREACH_RUN_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    log_event("outreach_trigger_start", url=url)
+
+    response = requests.post(url, headers=headers, timeout=60)
+    response.raise_for_status()
+
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {"raw": response.text}
+
+    log_event("outreach_trigger_finish", response=payload)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-scrape", action="store_true")
+    parser.add_argument("--skip-enrich", action="store_true")
+    parser.add_argument("--skip-generate", action="store_true")
     parser.add_argument("--skip-outreach", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=4)
@@ -181,6 +234,8 @@ def main():
         daily_cap=SCRAPER_DAILY_NEW_CAP,
         remaining_capacity=remaining_new_capacity,
         skip_scrape=args.skip_scrape,
+        skip_enrich=args.skip_enrich,
+        skip_generate=args.skip_generate,
         skip_outreach=args.skip_outreach,
         dry_run=args.dry_run,
         requested_limit=args.limit,
@@ -223,16 +278,20 @@ def main():
     else:
         log_event("scrape_skipped", reason="skip_scrape_flag")
 
-    # Outreach is intentionally separate and handled by its own scheduled workflow.
-    if args.skip_outreach:
-        log_event("outreach_stage_skipped", reason="skip_outreach_flag")
+    if args.skip_enrich:
+        log_event("enrich_skipped", reason="skip_enrich_flag")
     else:
-        log_event(
-            "outreach_stage_deferred",
-            reason="handled_by_separate_github_workflow",
-            expected_run_time_utc="09:15",
-            recommended_market="UK business hours",
-        )
+        run_enrich()
+
+    if args.skip_generate:
+        log_event("generate_skipped", reason="skip_generate_flag")
+    else:
+        run_generate_messages()
+
+    if args.skip_outreach:
+        log_event("outreach_trigger_skipped", reason="skip_outreach_flag")
+    else:
+        trigger_outreach()
 
     log_event(
         "pipeline_finish",
