@@ -2,7 +2,9 @@ import argparse
 import json
 import os
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import requests
@@ -25,6 +27,11 @@ FREE_TIER_MODE = os.getenv("FREE_TIER_MODE", "1").strip() != "0"
 SCRAPER_DAILY_NEW_CAP = int((os.getenv("SCRAPER_DAILY_NEW_CAP") or "40").strip())
 
 TARGET_MARKET = (os.getenv("TARGET_MARKET") or "uk").strip().lower()
+
+# ─── Companies House Classification ─────────────────────────────────────────
+COMPANIES_HOUSE_API_KEY = os.getenv("COMPANIES_HOUSE_API_KEY", "").strip()
+COMPLIANCE_ENABLED = os.getenv("COMPLIANCE_ENABLED", "1").strip() != "0"
+# ─────────────────────────────────────────────────────────────────────────────
 
 CITY_POOLS = {
     "uk": [
@@ -84,6 +91,22 @@ CITY_POOLS = {
 
 DEFAULT_NICHES = ["beauty"]
 ROTATING_CITY_BATCH_SIZE = 3
+
+CORPORATE_TYPES = {
+    "ltd",
+    "private-limited-guarant-nsc",
+    "private-limited-guarant-nsc-limited-exemption",
+    "private-limited-shares-section-30-exemption",
+    "private-unlimited",
+    "private-unlimited-nsc",
+    "plc",
+    "llp",
+    "limited-partnership",
+    "registered-society-non-jurisdictional",
+    "scottish-partnership",
+}
+
+NAME_MATCH_THRESHOLD = 0.65
 
 
 def log_event(event: str, **fields):
@@ -198,7 +221,7 @@ def trigger_outreach():
 
     log_event("outreach_trigger_start", url=url)
 
-    response = requests.post(url, headers=headers, timeout=60)
+    response = requests.post(url, headers=headers, timeout=180)
     response.raise_for_status()
 
     try:
@@ -209,10 +232,271 @@ def trigger_outreach():
     log_event("outreach_trigger_finish", response=payload)
 
 
+def clean_name(name: str) -> str:
+    import re
+
+    cleaned = name.lower().strip()
+    for pattern in [
+        r"\bltd\.?\b",
+        r"\blimited\b",
+        r"\bllp\b",
+        r"\bplc\b",
+        r"\binc\.?\b",
+    ]:
+        cleaned = re.sub(pattern, "", cleaned)
+    cleaned = re.sub(r"^the\s+", "", cleaned)
+    cleaned = re.sub(r"[^\w\s]", " ", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def name_similarity(a: str, b: str) -> float:
+    ca, cb = clean_name(a), clean_name(b)
+    if not ca or not cb:
+        return 0.0
+    if ca == cb:
+        return 1.0
+    if ca in cb or cb in ca:
+        return 0.85
+    return SequenceMatcher(None, ca, cb).ratio()
+
+
+def classify_lead_via_companies_house(business_name: str) -> dict:
+    if not COMPANIES_HOUSE_API_KEY:
+        return {
+            "type": "unknown",
+            "reason": "No Companies House API key configured",
+            "company_number": None,
+        }
+
+    try:
+        time.sleep(0.5)
+
+        resp = requests.get(
+            "https://api.company-information.service.gov.uk/search/companies",
+            params={"q": business_name, "items_per_page": 5},
+            auth=(COMPANIES_HOUSE_API_KEY, ""),
+            timeout=10,
+        )
+
+        if resp.status_code == 429:
+            log_event("companies_house_rate_limit", business=business_name)
+            time.sleep(60)
+            return classify_lead_via_companies_house(business_name)
+
+        if resp.status_code != 200:
+            log_event(
+                "companies_house_error",
+                status=resp.status_code,
+                business=business_name,
+            )
+            return {
+                "type": "unknown",
+                "reason": f"API error {resp.status_code}",
+                "company_number": None,
+            }
+
+        items = resp.json().get("items", [])
+        if not items:
+            return {
+                "type": "individual",
+                "reason": "No Companies House results — likely sole trader",
+                "company_number": None,
+            }
+
+        best = None
+        best_sim = 0.0
+        for item in items:
+            sim = name_similarity(business_name, item.get("title", ""))
+            if sim > best_sim:
+                best_sim = sim
+                best = item
+
+        if best and best_sim >= NAME_MATCH_THRESHOLD:
+            status = best.get("company_status", "").lower()
+            ctype = best.get("company_type", "").lower()
+            number = best.get("company_number", "")
+
+            if status == "active" and ctype in CORPORATE_TYPES:
+                return {
+                    "type": "corporate",
+                    "reason": f"Active {ctype.upper()} — {best.get('title')} ({number}). Similarity: {best_sim:.0%}",
+                    "company_number": number,
+                }
+
+            if status != "active":
+                return {
+                    "type": "unknown",
+                    "reason": f"Company found but status is '{status}'. Manual review needed.",
+                    "company_number": number,
+                }
+
+            return {
+                "type": "unknown",
+                "reason": f"Company type '{ctype}' not clearly corporate. Manual review needed.",
+                "company_number": number,
+            }
+
+        closest = best.get("title", "N/A") if best else "N/A"
+        return {
+            "type": "unknown",
+            "reason": f"Best match '{closest}' (similarity: {best_sim:.0%}) below threshold. Manual review.",
+            "company_number": None,
+        }
+
+    except requests.RequestException as e:
+        log_event("companies_house_exception", error=str(e), business=business_name)
+        return {
+            "type": "unknown",
+            "reason": f"Request error: {e}",
+            "company_number": None,
+        }
+
+
+def run_compliance_classification():
+    """
+    Classify all unclassified leads in Supabase.
+    Updates each lead with:
+      - pecr_classification: "corporate" | "individual" | "unknown"
+      - pecr_reason: human-readable explanation
+      - company_number: Companies House number (if found)
+      - pecr_classified_at: timestamp
+    """
+    sb = supabase_client()
+
+    unclassified = (
+        sb.table("leads")
+        .select("id, company_name, contact_email")
+        .is_("pecr_classification", "null")
+        .not_.is_("contact_email", "null")
+        .limit(100)
+        .execute()
+        .data
+        or []
+    )
+
+    if not unclassified:
+        log_event("compliance_skip", reason="no_unclassified_leads")
+        return
+
+    log_event("compliance_start", count=len(unclassified))
+
+    stats = {"corporate": 0, "individual": 0, "unknown": 0, "errors": 0}
+
+    for lead in unclassified:
+        lead_id = lead["id"]
+        business_name = (lead.get("company_name") or "").strip()
+
+        if not business_name:
+            try:
+                sb.table("leads").update(
+                    {
+                        "pecr_classification": "unknown",
+                        "pecr_reason": "Missing business name",
+                        "pecr_classified_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                ).eq("id", lead_id).execute()
+                stats["unknown"] += 1
+            except Exception as e:
+                stats["errors"] += 1
+                log_event("compliance_update_error", lead_id=lead_id, error=str(e))
+            continue
+
+        result = classify_lead_via_companies_house(business_name)
+
+        try:
+            sb.table("leads").update(
+                {
+                    "pecr_classification": result["type"],
+                    "pecr_reason": result["reason"],
+                    "company_number": result.get("company_number"),
+                    "pecr_classified_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("id", lead_id).execute()
+
+            stats[result["type"]] += 1
+
+            log_event(
+                "compliance_classified",
+                lead_id=lead_id,
+                business=business_name,
+                classification=result["type"],
+                reason=result["reason"],
+            )
+
+        except Exception as e:
+            stats["errors"] += 1
+            log_event("compliance_update_error", lead_id=lead_id, error=str(e))
+
+    log_event("compliance_finish", **stats)
+
+
+def run_suppression_check():
+    """
+    Check suppressed emails before outreach.
+    Any lead whose email is in email_suppressions gets marked as 'suppressed'
+    so the outreach step skips it.
+    """
+    sb = supabase_client()
+
+    suppressed_rows = (
+        sb.table("email_suppressions")
+        .select("email")
+        .execute()
+        .data
+        or []
+    )
+
+    suppressed_emails = {
+        str(row.get("email", "")).strip().lower()
+        for row in suppressed_rows
+        if row.get("email")
+    }
+
+    if not suppressed_emails:
+        log_event("suppression_check", result="no_suppressed_emails")
+        return
+
+    leads = (
+        sb.table("leads")
+        .select("id, contact_email, status")
+        .eq("pecr_classification", "corporate")
+        .neq("status", "suppressed")
+        .not_.is_("contact_email", "null")
+        .limit(5000)
+        .execute()
+        .data
+        or []
+    )
+
+    suppressed_count = 0
+
+    for lead in leads:
+        lead_email = str(lead.get("contact_email", "")).strip().lower()
+
+        if not lead_email or lead_email not in suppressed_emails:
+            continue
+
+        sb.table("leads").update(
+            {
+                "status": "suppressed",
+                "pecr_reason": "Email on suppression list — do not contact",
+            }
+        ).eq("id", lead["id"]).execute()
+
+        suppressed_count += 1
+
+    log_event(
+        "suppression_check",
+        total_checked=len(leads),
+        suppressed=suppressed_count,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--skip-scrape", action="store_true")
     parser.add_argument("--skip-enrich", action="store_true")
+    parser.add_argument("--skip-compliance", action="store_true")
     parser.add_argument("--skip-generate", action="store_true")
     parser.add_argument("--skip-outreach", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -235,6 +519,7 @@ def main():
         remaining_capacity=remaining_new_capacity,
         skip_scrape=args.skip_scrape,
         skip_enrich=args.skip_enrich,
+        skip_compliance=args.skip_compliance,
         skip_generate=args.skip_generate,
         skip_outreach=args.skip_outreach,
         dry_run=args.dry_run,
@@ -242,6 +527,8 @@ def main():
         outreach_base_url=OUTREACH_BASE_URL,
         outreach_token_present=bool(OUTREACH_RUN_TOKEN),
         google_places_key_present=bool(PLACES_KEY),
+        companies_house_key_present=bool(COMPANIES_HOUSE_API_KEY),
+        compliance_enabled=COMPLIANCE_ENABLED,
     )
 
     if args.dry_run:
@@ -282,6 +569,20 @@ def main():
         log_event("enrich_skipped", reason="skip_enrich_flag")
     else:
         run_enrich()
+
+    if args.skip_compliance:
+        log_event("compliance_skipped", reason="skip_compliance_flag")
+    elif not COMPLIANCE_ENABLED:
+        log_event("compliance_skipped", reason="compliance_disabled_in_env")
+    else:
+        if not COMPANIES_HOUSE_API_KEY:
+            log_event(
+                "compliance_warning",
+                reason="COMPANIES_HOUSE_API_KEY not set — leads will be classified as 'unknown' and held for manual review",
+            )
+
+        run_suppression_check()
+        run_compliance_classification()
 
     if args.skip_generate:
         log_event("generate_skipped", reason="skip_generate_flag")
