@@ -48,6 +48,13 @@ TEMPLATE_NO_CHAT = (
     "Best,\n"
     "Kris\n"
     "LeadClaw"
+    "\n\n---\n"
+    "Lead Claw Ltd (Company No. 13546017)\n"
+    "206 Whitechapel Road, London, E1 1AA\n"
+    "We found your clinic on Google Maps.\n"
+    "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
+    "Data rights: privacy@leadclaw.uk\n"
+    "Unsubscribe: {unsubscribe_url}"
 )
 
 TEMPLATE_CONTACT_FORM_ONLY = (
@@ -62,6 +69,13 @@ TEMPLATE_CONTACT_FORM_ONLY = (
     "Best,\n"
     "Kris\n"
     "LeadClaw"
+    "\n\n---\n"
+    "Lead Claw Ltd (Company No. 13546017)\n"
+    "206 Whitechapel Road, London, E1 1AA\n"
+    "We found your clinic on Google Maps.\n"
+    "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
+    "Data rights: privacy@leadclaw.uk\n"
+    "Unsubscribe: {unsubscribe_url}"
 )
 
 TEMPLATE_WEAK_BOOKING = (
@@ -76,6 +90,13 @@ TEMPLATE_WEAK_BOOKING = (
     "Best,\n"
     "Kris\n"
     "LeadClaw"
+    "\n\n---\n"
+    "Lead Claw Ltd (Company No. 13546017)\n"
+    "206 Whitechapel Road, London, E1 1AA\n"
+    "We found your clinic on Google Maps.\n"
+    "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
+    "Data rights: privacy@leadclaw.uk\n"
+    "Unsubscribe: {unsubscribe_url}"
 )
 
 
@@ -202,6 +223,7 @@ def choose_angle(row: dict):
             business=business,
             city_hint=city_hint,
             demo_url=demo_url,
+            unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
         )
 
         return angle, subject, message
@@ -220,6 +242,7 @@ def choose_angle(row: dict):
             business=business,
             city_hint=city_hint,
             demo_url=demo_url,
+            unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
         )
 
         return angle, subject, message
@@ -235,6 +258,7 @@ def choose_angle(row: dict):
         business=business,
         city_hint=city_hint,
         demo_url=demo_url,
+        unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
     )
 
     return angle, subject, message
@@ -251,9 +275,11 @@ def main():
         supabase.table("leads")
         .select(
             "id,company_name,contact_email,contact_phone,city,score,status,"
-            "has_live_chat,has_contact_form,google_rating,review_count,website,notes"
+            "has_live_chat,has_contact_form,google_rating,review_count,website,notes,"
+            "pecr_classification"
         )
         .in_("status", ["new", "queued"])
+        .eq("pecr_classification", "corporate")
         .limit(100)
         .execute()
         .data
