@@ -106,7 +106,7 @@ CORPORATE_TYPES = {
     "scottish-partnership",
 }
 
-NAME_MATCH_THRESHOLD = 0.65
+NAME_MATCH_THRESHOLD = 0.80
 
 
 def log_event(event: str, **fields):

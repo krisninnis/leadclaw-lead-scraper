@@ -112,6 +112,8 @@ def normalize_phone(raw: str | None) -> str:
     return str(raw or "").strip()
 
 
+BLOCKED_EMAIL_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico"}
+
 def is_bad_email(email: str) -> bool:
     email = normalize_email(email)
 
@@ -124,30 +126,14 @@ def is_bad_email(email: str) -> bool:
     if any(email.startswith(prefix) for prefix in BLOCKED_EMAIL_PREFIXES):
         return True
 
-    return False
-
-
-def best_contact(row: dict) -> str:
-    email = normalize_email(row.get("contact_email"))
-    phone = normalize_phone(row.get("contact_phone"))
-
-    if email and not is_bad_email(email):
-        return email
-
-    if phone:
-        return phone
-
-    return "NO_CONTACT"
-
-
-def has_valid_contact(row: dict) -> bool:
-    email = normalize_email(row.get("contact_email"))
-    phone = normalize_phone(row.get("contact_phone"))
-
-    if email and not is_bad_email(email):
+    # Block image filenames mistakenly scraped as emails
+    local_part = email.split("@")[0].lower()
+    if any(local_part.endswith(ext.replace(".", "")) for ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"]):
         return True
-
-    if phone:
+    
+    # Block if domain looks like a file extension
+    domain = email.split("@")[1].lower() if "@" in email else ""
+    if any(domain.startswith(ext.lstrip(".")) for ext in BLOCKED_EMAIL_EXTENSIONS):
         return True
 
     return False
@@ -201,7 +187,8 @@ def choose_angle(row: dict):
     notes = parse_notes(row.get("notes"))
 
     lead_id = row.get("id") or ""
-    demo_url = f"{DEMO_URL}&lead={lead_id}" if lead_id else DEMO_URL
+    _demo_base = DEMO_URL if "?" in DEMO_URL else f"{DEMO_URL}?source=outreach"
+    demo_url = f"{_demo_base}&lead={lead_id}" if lead_id else _demo_base
 
     has_contact_form = row.get("has_contact_form")
 
