@@ -138,7 +138,30 @@ def is_bad_email(email: str) -> bool:
 
     return False
 
+def best_contact(row: dict) -> str:
+    email = normalize_email(row.get("contact_email"))
+    phone = normalize_phone(row.get("contact_phone"))
 
+    if email and not is_bad_email(email):
+        return email
+
+    if phone:
+        return phone
+
+    return "NO_CONTACT"
+
+
+def has_valid_contact(row: dict) -> bool:
+    email = normalize_email(row.get("contact_email"))
+    phone = normalize_phone(row.get("contact_phone"))
+
+    if email and not is_bad_email(email):
+        return True
+
+    if phone:
+        return True
+
+    return False
 def parse_notes(notes: str | None) -> dict:
     parsed = {}
     raw = str(notes or "").strip()
