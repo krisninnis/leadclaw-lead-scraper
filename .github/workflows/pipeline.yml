@@ -32,6 +32,7 @@ jobs:
           OUTREACH_BASE_URL: ${{ secrets.OUTREACH_BASE_URL }}
           OUTREACH_RUN_TOKEN: ${{ secrets.OUTREACH_RUN_TOKEN }}
           OUTREACH_DEMO_URL: ${{ secrets.OUTREACH_DEMO_URL }}
+          COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
           FREE_TIER_MODE: "1"
           SCRAPER_DAILY_NEW_CAP: "40"
           ENRICH_DAILY_LIMIT: "20"
