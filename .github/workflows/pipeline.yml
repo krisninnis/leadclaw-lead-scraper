@@ -38,7 +38,6 @@ jobs:
           ENRICH_DAILY_LIMIT: "20"
           TARGET_MARKET: "uk"
         run: |
-          python auto_pipeline.py --limit 4
           echo "=== CHECKING generate_outreach_messages.py ==="
           grep -n "has_valid_contact" generate_outreach_messages.py
           python auto_pipeline.py --limit 4
