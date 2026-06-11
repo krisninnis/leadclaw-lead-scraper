@@ -38,12 +38,12 @@ BLOCKED_EMAIL_PREFIXES = [
 
 TEMPLATE_NO_CHAT = (
     "Hi, I came across {business}{city_hint} and wanted to reach out.\n\n"
-    "I'm building LeadClaw, a brand-new startup for clinics that helps capture website enquiries when staff are busy or out of hours.\n\n"
-    "It's free to get started, with an optional paid subscription later, and there's a no-obligation free trial as well.\n\n"
-    "I put together a quick demo for your clinic here:\n"
+    "I'm building LeadClaw, a simple website assistant that helps small businesses capture enquiries when you're busy or out of hours, so fewer website visitors leave without getting in touch.\n\n"
+    "It's free to get started, with an optional paid plan later, and there's a no-obligation free trial as well.\n\n"
+    "I put together a quick demo for your business here:\n"
     "{demo_url}\n\n"
     "Because we're still early, we're improving the product constantly and listening closely to feedback.\n\n"
-    "We're also giving the first 100 clients founding-client perks like priority support, early feature access, and future benefits that won't be offered once we grow.\n\n"
+    "As we're just starting out, early clients also get founding-client perks like priority support and early access to new features.\n\n"
     "Worth a quick look?\n\n"
     "Best,\n"
     "Kris\n"
@@ -51,20 +51,20 @@ TEMPLATE_NO_CHAT = (
     "\n\n---\n"
     "Lead Claw Ltd (Company No. 13546017)\n"
     "206 Whitechapel Road, London, E1 1AA\n"
-    "We found your clinic on Google Maps.\n"
+    "We found your business on Google Maps.\n"
     "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
     "Data rights: privacy@leadclaw.uk\n"
     "Unsubscribe: {unsubscribe_url}"
 )
 
 TEMPLATE_CONTACT_FORM_ONLY = (
-    "Hi, I came across {business}{city_hint} and noticed the site appears to rely mainly on a contact form.\n\n"
-    "I'm building LeadClaw, a brand-new startup for clinics that helps capture and convert more website enquiries before visitors drop off.\n\n"
-    "It's free to get started, with an optional paid subscription later, and there's a no-obligation free trial too.\n\n"
-    "I put together a quick demo for your clinic here:\n"
+    "Hi, I came across {business}{city_hint} and noticed the site relies mainly on a contact form.\n\n"
+    "I'm building LeadClaw, a simple website assistant that helps small businesses capture and follow up on enquiries before visitors drop off, so you collect more contact details from the people already visiting your site.\n\n"
+    "It's free to get started, with an optional paid plan later, and there's a no-obligation free trial too.\n\n"
+    "I put together a quick demo for your business here:\n"
     "{demo_url}\n\n"
-    "Because the product is still early, we're shipping updates continuously and taking real feedback from clinics seriously.\n\n"
-    "The first 100 clients will also get founding-client perks like priority support, early access to future features, and extra benefits we won't offer later.\n\n"
+    "Because the product is still early, we're shipping updates continuously and taking real feedback seriously.\n\n"
+    "As we're just starting out, early clients also get founding-client perks like priority support and early access to new features.\n\n"
     "Worth a quick look?\n\n"
     "Best,\n"
     "Kris\n"
@@ -72,20 +72,20 @@ TEMPLATE_CONTACT_FORM_ONLY = (
     "\n\n---\n"
     "Lead Claw Ltd (Company No. 13546017)\n"
     "206 Whitechapel Road, London, E1 1AA\n"
-    "We found your clinic on Google Maps.\n"
+    "We found your business on Google Maps.\n"
     "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
     "Data rights: privacy@leadclaw.uk\n"
     "Unsubscribe: {unsubscribe_url}"
 )
 
 TEMPLATE_WEAK_BOOKING = (
-    "Hi, I came across {business}{city_hint} and noticed there may be some friction in the booking journey.\n\n"
-    "I'm building LeadClaw, a brand-new startup for clinics that helps capture missed enquiries and make follow-up easier.\n\n"
-    "It's free to get started, with an optional paid subscription later, and there's a no-obligation free trial available.\n\n"
-    "I put together a quick demo for your clinic here:\n"
+    "Hi, I came across {business}{city_hint} and noticed there may be some friction for people trying to get in touch or book.\n\n"
+    "I'm building LeadClaw, a simple website assistant that helps small businesses capture missed enquiries and follow up automatically, so fewer leads slip through when you can't get to the phone.\n\n"
+    "It's free to get started, with an optional paid plan later, and there's a no-obligation free trial available.\n\n"
+    "I put together a quick demo for your business here:\n"
     "{demo_url}\n\n"
-    "We're still in the early stage, which means the product is improving all the time and early users get a real chance to shape what we build.\n\n"
-    "The first 100 clients will also get founding-client perks like priority support, early feature access, and future benefits that won't be available once LeadClaw grows.\n\n"
+    "We're still in the early stage, which means the product is improving all the time and early users get a real say in what we build.\n\n"
+    "As we're just starting out, early clients also get founding-client perks like priority support and early access to new features.\n\n"
     "Worth a quick look?\n\n"
     "Best,\n"
     "Kris\n"
@@ -93,7 +93,7 @@ TEMPLATE_WEAK_BOOKING = (
     "\n\n---\n"
     "Lead Claw Ltd (Company No. 13546017)\n"
     "206 Whitechapel Road, London, E1 1AA\n"
-    "We found your clinic on Google Maps.\n"
+    "We found your business on Google Maps.\n"
     "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
     "Data rights: privacy@leadclaw.uk\n"
     "Unsubscribe: {unsubscribe_url}"
@@ -202,7 +202,7 @@ def build_subject(angle, business):
 
 def choose_angle(row: dict):
 
-    business = (row.get("company_name") or "your clinic").strip()
+    business = (row.get("company_name") or "your business").strip()
     city = (row.get("city") or "").strip()
 
     city_hint = f" in {city}" if city else ""
@@ -314,7 +314,7 @@ def main():
 
     for index, row in enumerate(rows, start=1):
 
-        business = (row.get("company_name") or "your clinic").strip()
+        business = (row.get("company_name") or "your business").strip()
 
         contact = best_contact(row)
 
@@ -353,6 +353,7 @@ def main():
             updated += 1
 
     OUTPUT_FILE.write_text("\n".join(out_lines), encoding="utf-8")
+
 
     print(f"Wrote {len(rows)} messages -> {OUTPUT_FILE}")
     print(f"Updated {updated} leads in Supabase")
