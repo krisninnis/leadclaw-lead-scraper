@@ -1,0 +1,65 @@
+{
+  "_comment": "Config-driven niche definitions for LeadClaw. Read-only metadata consumed by niche_config.py. Adding a niche here does NOT enable it in the daily pipeline (auto_pipeline.py DEFAULT_NICHES still controls that). Thresholds are advisory helpers and are not yet wired into scoring (places_run.py still owns live thresholds).",
+  "niches": {
+    "beauty": {
+      "queries": ["beauty salon", "beauty clinic"],
+      "min_reviews": 20,
+      "min_rating": 4.0,
+      "booking_tools": ["fresha", "treatwell", "phorest", "booksy", "timely", "cliniko"]
+    },
+    "dental": {
+      "queries": ["dentist", "dental practice", "dental clinic"],
+      "min_reviews": 20,
+      "min_rating": 4.2,
+      "booking_tools": ["dentally", "zesty", "cliniko", "setmore"]
+    },
+    "plumber": {
+      "queries": ["plumber", "plumbing services", "emergency plumber"],
+      "min_reviews": 5,
+      "min_rating": 3.8,
+      "booking_tools": ["servicem8", "jobber", "housecall", "calendly", "setmore"]
+    },
+    "electrician": {
+      "queries": ["electrician", "electrical services", "emergency electrician"],
+      "min_reviews": 5,
+      "min_rating": 3.8,
+      "booking_tools": ["servicem8", "jobber", "housecall", "calendly", "setmore"]
+    },
+    "heating": {
+      "queries": ["heating engineer", "boiler service", "boiler repair", "gas engineer"],
+      "min_reviews": 5,
+      "min_rating": 3.8,
+      "booking_tools": ["servicem8", "jobber", "housecall", "calendly", "setmore"]
+    },
+    "roofer": {
+      "queries": ["roofer", "roofing services", "roofing contractor"],
+      "min_reviews": 4,
+      "min_rating": 3.8,
+      "booking_tools": ["servicem8", "jobber", "calendly", "setmore"]
+    },
+    "pest_control": {
+      "queries": ["pest control", "pest control services"],
+      "min_reviews": 5,
+      "min_rating": 3.8,
+      "booking_tools": ["servicem8", "jobber", "housecall", "calendly", "setmore"]
+    },
+    "landscaper": {
+      "queries": ["landscaper", "landscaping services", "garden services"],
+      "min_reviews": 5,
+      "min_rating": 3.8,
+      "booking_tools": ["jobber", "servicem8", "calendly", "setmore"]
+    },
+    "garage": {
+      "queries": ["car garage", "MOT centre", "car repair", "auto repair"],
+      "min_reviews": 8,
+      "min_rating": 3.8,
+      "booking_tools": ["calendly", "setmore", "acuity", "servicem8"]
+    },
+    "estate_agent": {
+      "queries": ["estate agent", "letting agent"],
+      "min_reviews": 8,
+      "min_rating": 3.8,
+      "booking_tools": ["calendly", "acuity", "setmore"]
+    }
+  }
+}
