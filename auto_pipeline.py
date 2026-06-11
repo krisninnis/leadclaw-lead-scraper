@@ -136,6 +136,29 @@ def get_rotating_cities(pool: list[str], batch_size: int) -> list[str]:
     return selected
 
 
+def parse_cli_list(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+
+    parsed: list[str] = []
+    seen: set[str] = set()
+
+    for value in values:
+        for item in str(value).split(","):
+            normalized = item.strip()
+            if not normalized:
+                continue
+
+            dedupe_key = normalized.lower()
+            if dedupe_key in seen:
+                continue
+
+            parsed.append(normalized)
+            seen.add(dedupe_key)
+
+    return parsed
+
+
 def supabase_client():
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
@@ -501,10 +524,48 @@ def main():
     parser.add_argument("--skip-outreach", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=4)
+    parser.add_argument("--cities", nargs="+")
+    parser.add_argument("--niches", nargs="+")
     args = parser.parse_args()
 
     city_pool = get_city_pool()
-    selected_cities = get_rotating_cities(city_pool, ROTATING_CITY_BATCH_SIZE)
+    manual_cities = parse_cli_list(args.cities)
+    manual_niches = parse_cli_list(args.niches)
+    selected_cities = manual_cities or get_rotating_cities(
+        city_pool,
+        ROTATING_CITY_BATCH_SIZE,
+    )
+    selected_niches = manual_niches or DEFAULT_NICHES
+    outreach_blocked = args.skip_outreach or args.dry_run
+
+    log_event(
+        "pipeline_run_plan",
+        selected_cities=selected_cities,
+        selected_niches=selected_niches,
+        requested_limit=args.limit,
+        skip_outreach=args.skip_outreach,
+        dry_run=args.dry_run,
+        outreach_blocked=outreach_blocked,
+        manual_cities_supplied=manual_cities is not None,
+        manual_niches_supplied=manual_niches is not None,
+        new24h=None if args.dry_run else "pending",
+        remaining_capacity=None if args.dry_run else "pending",
+    )
+
+    if args.dry_run:
+        log_event(
+            "pipeline_dry_run_exit",
+            target_market=TARGET_MARKET,
+            selected_cities=selected_cities,
+            selected_niches=selected_niches,
+            new24h=None,
+            remaining_capacity=None,
+            requested_limit=args.limit,
+            outreach_blocked=outreach_blocked,
+            reason="plan_only_no_supabase_or_pipeline_steps",
+        )
+        raise SystemExit(0)
+
     new_24h = current_new_leads_24h() if FREE_TIER_MODE else 0
     remaining_new_capacity = max(0, SCRAPER_DAILY_NEW_CAP - new_24h)
 
@@ -512,7 +573,7 @@ def main():
         "pipeline_start",
         target_market=TARGET_MARKET,
         selected_cities=selected_cities,
-        niches=DEFAULT_NICHES,
+        niches=selected_niches,
         free_tier_mode=FREE_TIER_MODE,
         new24h=new_24h,
         daily_cap=SCRAPER_DAILY_NEW_CAP,
@@ -531,17 +592,6 @@ def main():
         compliance_enabled=COMPLIANCE_ENABLED,
     )
 
-    if args.dry_run:
-        log_event(
-            "pipeline_dry_run_exit",
-            target_market=TARGET_MARKET,
-            selected_cities=selected_cities,
-            new24h=new_24h,
-            remaining_capacity=remaining_new_capacity,
-            requested_limit=args.limit,
-        )
-        raise SystemExit(0)
-
     if not args.skip_scrape:
         if not PLACES_KEY:
             log_event("scrape_skipped", reason="google_places_api_key_missing")
@@ -558,7 +608,7 @@ def main():
                 run_places_batch(
                     effective_limit,
                     selected_cities,
-                    DEFAULT_NICHES,
+                    selected_niches,
                 )
             else:
                 log_event("scrape_skipped", reason="effective_limit_zero")
@@ -589,8 +639,9 @@ def main():
     else:
         run_generate_messages()
 
-    if args.skip_outreach:
-        log_event("outreach_trigger_skipped", reason="skip_outreach_flag")
+    if outreach_blocked:
+        reason = "dry_run_flag" if args.dry_run else "skip_outreach_flag"
+        log_event("outreach_trigger_skipped", reason=reason)
     else:
         trigger_outreach()
 
@@ -598,6 +649,7 @@ def main():
         "pipeline_finish",
         target_market=TARGET_MARKET,
         selected_cities=selected_cities,
+        niches=selected_niches,
     )
 
 
