@@ -1,5 +1,8 @@
+import argparse
+import json
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -115,6 +118,48 @@ PREFERRED_LOCAL_PARTS = {
     "enquiries",
     "enquiry",
 }
+
+
+def log_event(event: str, **fields):
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        **fields,
+    }
+    print(json.dumps(payload, default=str))
+
+
+def parse_cli_list(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+
+    parsed: list[str] = []
+    seen: set[str] = set()
+
+    for value in values:
+        for item in str(value).split(","):
+            normalized = item.strip()
+            if not normalized:
+                continue
+
+            dedupe_key = normalized.lower()
+            if dedupe_key in seen:
+                continue
+
+            parsed.append(normalized)
+            seen.add(dedupe_key)
+
+    return parsed
+
+
+def apply_lead_scope(query, niches: list[str] | None, created_after: str | None):
+    if niches:
+        query = query.in_("niche", niches)
+
+    if created_after:
+        query = query.gte("created_at", created_after)
+
+    return query
 
 
 def fetch(url: str) -> str | None:
@@ -337,22 +382,34 @@ def get_contact_links(base_url: str, html: str) -> list[str]:
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--niches", nargs="+")
+    parser.add_argument("--created-after")
+    args = parser.parse_args()
+    selected_niches = parse_cli_list(args.niches)
+    created_after = args.created_after.strip() if args.created_after else None
+
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("Missing Supabase credentials")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    rows = (
+    log_event(
+        "enrich_scope",
+        niches=selected_niches,
+        created_after=created_after,
+        isolated=bool(selected_niches or created_after),
+    )
+
+    query = (
         supabase.table("leads")
-        .select("id,website,company_name,contact_email,status")
+        .select("id,website,company_name,contact_email,status,niche,created_at")
         .eq("status", "new")
         .is_("contact_email", "null")
         .not_.is_("website", "null")
-        .limit(ENRICH_LIMIT)
-        .execute()
-        .data
-        or []
     )
+    query = apply_lead_scope(query, selected_niches, created_after)
+    rows = query.limit(ENRICH_LIMIT).execute().data or []
 
     scanned = 0
     updated = 0

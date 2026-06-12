@@ -184,6 +184,16 @@ def current_new_leads_24h():
     return len(rows)
 
 
+def apply_downstream_lead_scope(query, niches: list[str] | None, created_after: str | None):
+    if niches:
+        query = query.in_("niche", niches)
+
+    if created_after:
+        query = query.gte("created_at", created_after)
+
+    return query
+
+
 def run_python_script(script_name: str, *args: str):
     cmd = [PYTHON_BIN, script_name, *args]
     log_event("script_start", script=script_name, command=cmd)
@@ -219,12 +229,31 @@ def run_places_batch(limit: int, cities: list[str], niches: list[str]):
     run_python_script("places_batch.py", *args)
 
 
-def run_enrich():
-    run_python_script("enrich_emails.py")
+def run_enrich(niches: list[str] | None = None, created_after: str | None = None):
+    args: list[str] = []
+
+    if niches:
+        args.extend(["--niches", *niches])
+
+    if created_after:
+        args.extend(["--created-after", created_after])
+
+    run_python_script("enrich_emails.py", *args)
 
 
-def run_generate_messages():
-    run_python_script("generate_outreach_messages.py")
+def run_generate_messages(
+    niches: list[str] | None = None,
+    created_after: str | None = None,
+):
+    args: list[str] = []
+
+    if niches:
+        args.extend(["--niches", *niches])
+
+    if created_after:
+        args.extend(["--created-after", created_after])
+
+    run_python_script("generate_outreach_messages.py", *args)
 
 
 def trigger_outreach():
@@ -375,7 +404,10 @@ def classify_lead_via_companies_house(business_name: str) -> dict:
         }
 
 
-def run_compliance_classification():
+def run_compliance_classification(
+    niches: list[str] | None = None,
+    created_after: str | None = None,
+):
     """
     Classify all unclassified leads in Supabase.
     Updates each lead with:
@@ -386,16 +418,21 @@ def run_compliance_classification():
     """
     sb = supabase_client()
 
-    unclassified = (
+    log_event(
+        "compliance_scope",
+        niches=niches,
+        created_after=created_after,
+        isolated=bool(niches or created_after),
+    )
+
+    query = (
         sb.table("leads")
-        .select("id, company_name, contact_email")
+        .select("id, company_name, contact_email, niche, created_at")
         .is_("pecr_classification", "null")
         .not_.is_("contact_email", "null")
-        .limit(100)
-        .execute()
-        .data
-        or []
     )
+    query = apply_downstream_lead_scope(query, niches, created_after)
+    unclassified = query.limit(100).execute().data or []
 
     if not unclassified:
         log_event("compliance_skip", reason="no_unclassified_leads")
@@ -453,7 +490,10 @@ def run_compliance_classification():
     log_event("compliance_finish", **stats)
 
 
-def run_suppression_check():
+def run_suppression_check(
+    niches: list[str] | None = None,
+    created_after: str | None = None,
+):
     """
     Check suppressed emails before outreach.
     Any lead whose email is in email_suppressions gets marked as 'suppressed'
@@ -479,17 +519,22 @@ def run_suppression_check():
         log_event("suppression_check", result="no_suppressed_emails")
         return
 
-    leads = (
+    log_event(
+        "suppression_scope",
+        niches=niches,
+        created_after=created_after,
+        isolated=bool(niches or created_after),
+    )
+
+    query = (
         sb.table("leads")
-        .select("id, contact_email, status")
+        .select("id, contact_email, status, niche, created_at")
         .eq("pecr_classification", "corporate")
         .neq("status", "suppressed")
         .not_.is_("contact_email", "null")
-        .limit(5000)
-        .execute()
-        .data
-        or []
     )
+    query = apply_downstream_lead_scope(query, niches, created_after)
+    leads = query.limit(5000).execute().data or []
 
     suppressed_count = 0
 
@@ -537,6 +582,10 @@ def main():
     )
     selected_niches = manual_niches or DEFAULT_NICHES
     outreach_blocked = args.skip_outreach or args.dry_run
+    pipeline_started_at = datetime.now(timezone.utc).isoformat()
+    downstream_isolated = manual_niches is not None
+    downstream_niches = selected_niches if downstream_isolated else None
+    downstream_created_after = pipeline_started_at if downstream_isolated else None
 
     log_event(
         "pipeline_run_plan",
@@ -550,6 +599,9 @@ def main():
         manual_niches_supplied=manual_niches is not None,
         new24h=None if args.dry_run else "pending",
         remaining_capacity=None if args.dry_run else "pending",
+        downstream_isolated=downstream_isolated,
+        downstream_niches=downstream_niches,
+        downstream_created_after=downstream_created_after,
     )
 
     if args.dry_run:
@@ -562,6 +614,9 @@ def main():
             remaining_capacity=None,
             requested_limit=args.limit,
             outreach_blocked=outreach_blocked,
+            downstream_isolated=downstream_isolated,
+            downstream_niches=downstream_niches,
+            downstream_created_after=downstream_created_after,
             reason="plan_only_no_supabase_or_pipeline_steps",
         )
         raise SystemExit(0)
@@ -590,6 +645,9 @@ def main():
         google_places_key_present=bool(PLACES_KEY),
         companies_house_key_present=bool(COMPANIES_HOUSE_API_KEY),
         compliance_enabled=COMPLIANCE_ENABLED,
+        downstream_isolated=downstream_isolated,
+        downstream_niches=downstream_niches,
+        downstream_created_after=downstream_created_after,
     )
 
     if not args.skip_scrape:
@@ -618,7 +676,7 @@ def main():
     if args.skip_enrich:
         log_event("enrich_skipped", reason="skip_enrich_flag")
     else:
-        run_enrich()
+        run_enrich(downstream_niches, downstream_created_after)
 
     if args.skip_compliance:
         log_event("compliance_skipped", reason="skip_compliance_flag")
@@ -631,13 +689,13 @@ def main():
                 reason="COMPANIES_HOUSE_API_KEY not set — leads will be classified as 'unknown' and held for manual review",
             )
 
-        run_suppression_check()
-        run_compliance_classification()
+        run_suppression_check(downstream_niches, downstream_created_after)
+        run_compliance_classification(downstream_niches, downstream_created_after)
 
     if args.skip_generate:
         log_event("generate_skipped", reason="skip_generate_flag")
     else:
-        run_generate_messages()
+        run_generate_messages(downstream_niches, downstream_created_after)
 
     if outreach_blocked:
         reason = "dry_run_flag" if args.dry_run else "skip_outreach_flag"
@@ -650,6 +708,9 @@ def main():
         target_market=TARGET_MARKET,
         selected_cities=selected_cities,
         niches=selected_niches,
+        downstream_isolated=downstream_isolated,
+        downstream_niches=downstream_niches,
+        downstream_created_after=downstream_created_after,
     )
 
 

@@ -1,3 +1,5 @@
+import argparse
+import json
 import os
 import re
 from datetime import datetime, timezone
@@ -31,6 +33,48 @@ BLOCKED_EMAIL_PREFIXES = [
     "donotreply@",
     "do-not-reply@",
 ]
+
+
+def log_event(event: str, **fields):
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        **fields,
+    }
+    print(json.dumps(payload, default=str))
+
+
+def parse_cli_list(values: list[str] | None) -> list[str] | None:
+    if values is None:
+        return None
+
+    parsed: list[str] = []
+    seen: set[str] = set()
+
+    for value in values:
+        for item in str(value).split(","):
+            normalized = item.strip()
+            if not normalized:
+                continue
+
+            dedupe_key = normalized.lower()
+            if dedupe_key in seen:
+                continue
+
+            parsed.append(normalized)
+            seen.add(dedupe_key)
+
+    return parsed
+
+
+def apply_lead_scope(query, niches: list[str] | None, created_after: str | None):
+    if niches:
+        query = query.in_("niche", niches)
+
+    if created_after:
+        query = query.gte("created_at", created_after)
+
+    return query
 
 # -----------------------------
 # NEW DEMO-LED TEMPLATES
@@ -275,26 +319,37 @@ def choose_angle(row: dict):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--niches", nargs="+")
+    parser.add_argument("--created-after")
+    args = parser.parse_args()
+    selected_niches = parse_cli_list(args.niches)
+    created_after = args.created_after.strip() if args.created_after else None
 
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("Missing Supabase env")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    raw_rows = (
+    log_event(
+        "generate_scope",
+        niches=selected_niches,
+        created_after=created_after,
+        isolated=bool(selected_niches or created_after),
+    )
+
+    query = (
         supabase.table("leads")
         .select(
             "id,company_name,contact_email,contact_phone,city,score,status,"
             "has_live_chat,has_contact_form,google_rating,review_count,website,notes,"
-            "pecr_classification"
+            "pecr_classification,niche,created_at"
         )
         .in_("status", ["new", "queued"])
         .eq("pecr_classification", "corporate")
-        .limit(100)
-        .execute()
-        .data
-        or []
     )
+    query = apply_lead_scope(query, selected_niches, created_after)
+    raw_rows = query.limit(100).execute().data or []
 
     rows = [r for r in raw_rows if has_valid_contact(r)][:30]
 
