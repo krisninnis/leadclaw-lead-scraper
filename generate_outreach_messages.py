@@ -287,6 +287,10 @@ def parse_int(value):
         return None
 
 
+def lead_quality_score(row: dict) -> int | None:
+    return parse_int(row.get("lead_quality_score"))
+
+
 def normalize_niche(value: str | None) -> str:
     raw = str(value or "").strip().lower()
     normalized = raw.replace("-", "_").replace(" ", "_")
@@ -416,7 +420,21 @@ def main():
     query = apply_lead_scope(query, selected_niches, created_after)
     raw_rows = query.limit(100).execute().data or []
 
-    rows = [r for r in raw_rows if has_valid_contact(r)][:30]
+    quality_rows = [
+        row
+        for row in raw_rows
+        if lead_quality_score(row) is not None and lead_quality_score(row) >= 70
+    ]
+    rows = [r for r in quality_rows if has_valid_contact(r)][:30]
+    filtered_by_quality = len(raw_rows) - len(quality_rows)
+
+    log_event(
+        "generate_quality_filter",
+        total_candidate_leads=len(raw_rows),
+        filtered_by_quality_score=filtered_by_quality,
+        selected_for_message_generation=len(rows),
+        minimum_lead_quality_score=70,
+    )
 
     out_lines = []
 
@@ -426,8 +444,10 @@ def main():
     out_lines.append("")
     out_lines.append(f"Base URL: {APP_URL}")
     out_lines.append(f"Demo URL: {DEMO_URL}")
+    out_lines.append(f"Total candidate leads: {len(raw_rows)}")
+    out_lines.append(f"Filtered by quality score: {filtered_by_quality}")
     out_lines.append(f"Selected leads: {len(rows)}")
-    out_lines.append(f"Filtered out: {max(0, len(raw_rows)-len(rows))}")
+    out_lines.append(f"Filtered out after contact checks: {max(0, len(quality_rows)-len(rows))}")
     out_lines.append("")
 
     updated = 0
