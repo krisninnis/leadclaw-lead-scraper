@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import re
 from pathlib import Path
@@ -84,22 +85,86 @@ WEAK_SITE_PATTERNS = [
     "site is currently unavailable",
 ]
 
-TIMEOUT = 12
+FETCH_TIMEOUT = (5, 10)
+MAX_HTML_BYTES = 750_000
+
+
+def log_event(event: str, **fields):
+    print(json.dumps({"event": event, **fields}, default=str))
 
 
 def fetch_html(url: str) -> str | None:
+    bytes_read = 0
+
     try:
-        response = requests.get(
+        with requests.get(
             url,
             headers={"User-Agent": UA},
-            timeout=TIMEOUT,
+            timeout=FETCH_TIMEOUT,
             allow_redirects=True,
+            stream=True,
+        ) as response:
+            final_url = response.url or url
+            status_code = response.status_code
+            content_type = response.headers.get("Content-Type", "").lower()
+
+            if status_code != 200:
+                log_event(
+                    "website_fetch_failed",
+                    url=url,
+                    final_url=final_url,
+                    reason=f"http_{status_code}",
+                )
+                return None
+
+            if "text/html" not in content_type:
+                log_event(
+                    "website_fetch_failed",
+                    url=url,
+                    final_url=final_url,
+                    reason="non_html_response",
+                    content_type=content_type,
+                )
+                return None
+
+            chunks: list[bytes] = []
+            for chunk in response.iter_content(chunk_size=16384):
+                if not chunk:
+                    continue
+
+                bytes_read += len(chunk)
+                if bytes_read > MAX_HTML_BYTES:
+                    log_event(
+                        "website_fetch_truncated",
+                        url=url,
+                        final_url=final_url,
+                        max_bytes=MAX_HTML_BYTES,
+                    )
+                    break
+
+                chunks.append(chunk)
+
+            encoding = response.encoding or "utf-8"
+            return b"".join(chunks).decode(encoding, errors="ignore").lower()
+    except requests.exceptions.Timeout:
+        log_event("website_fetch_failed", url=url, reason="timeout")
+    except requests.exceptions.SSLError as exc:
+        log_event("website_fetch_failed", url=url, reason="ssl_error", error=str(exc))
+    except requests.exceptions.RequestException as exc:
+        log_event(
+            "website_fetch_failed",
+            url=url,
+            reason=exc.__class__.__name__,
+            error=str(exc),
         )
-        content_type = response.headers.get("Content-Type", "").lower()
-        if response.status_code == 200 and "text/html" in content_type:
-            return response.text.lower()
-    except Exception:
-        return None
+    except Exception as exc:
+        log_event(
+            "website_fetch_failed",
+            url=url,
+            reason="unexpected_error",
+            error=str(exc),
+        )
+
     return None
 
 
@@ -139,16 +204,20 @@ def scan_website(url: str | None) -> Dict:
         "outreach_angle": "no_live_chat",
         "site_domain": extract_domain(url),
         "scan_ok": False,
+        "scan_error": None,
     }
 
     if not url:
+        result["scan_error"] = "missing_url"
         return result
 
     html = fetch_html(url)
     if not html:
+        result["scan_error"] = "website_fetch_failed"
         return result
 
     result["scan_ok"] = True
+    result["scan_error"] = None
     result["has_live_chat"] = any(p in html for p in CHAT_PATTERNS)
     result["has_contact_form"] = any(p in html for p in CONTACT_FORM_PATTERNS)
     result["has_booking_cta"] = any(p in html for p in BOOKING_PATTERNS)
@@ -201,6 +270,33 @@ def scan_website(url: str | None) -> Dict:
         result["outreach_angle"] = "no_live_chat"
 
     return result
+
+
+def safe_scan_website(url: str | None) -> Dict:
+    try:
+        return scan_website(url)
+    except Exception as exc:
+        log_event(
+            "website_scan_failed",
+            url=url,
+            reason="unexpected_scan_error",
+            error=str(exc),
+        )
+        return {
+            "has_live_chat": False,
+            "has_contact_form": False,
+            "has_booking_cta": False,
+            "has_whatsapp": False,
+            "has_faq": False,
+            "has_phone_cta": False,
+            "primary_cta": "unknown",
+            "website_quality_score": 0,
+            "lead_fit_score": 0,
+            "outreach_angle": "no_live_chat",
+            "site_domain": extract_domain(url),
+            "scan_ok": False,
+            "scan_error": "unexpected_scan_error",
+        }
 
 
 def score_lead(
@@ -316,6 +412,8 @@ def build_notes(address: str | None, analysis: Dict) -> str:
     parts.append(f"has_whatsapp={analysis.get('has_whatsapp')}")
     parts.append(f"has_faq={analysis.get('has_faq')}")
     parts.append(f"has_phone_cta={analysis.get('has_phone_cta')}")
+    if analysis.get("scan_error"):
+        parts.append(f"scan_error={analysis.get('scan_error')}")
     return " | ".join(parts)
 
 
@@ -399,7 +497,7 @@ def main():
 
         details = place_details(place_id)
         website = details.get("website")
-        analysis = scan_website(website)
+        analysis = safe_scan_website(website)
 
         if not should_keep_lead(
             website,
