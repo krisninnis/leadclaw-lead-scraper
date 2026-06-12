@@ -408,7 +408,7 @@ def main():
         .select(
             "id,company_name,contact_email,contact_phone,city,score,status,"
             "has_live_chat,has_contact_form,google_rating,review_count,website,notes,"
-            "pecr_classification,niche,created_at"
+            "pecr_classification,niche,created_at,lead_quality_score,lead_quality_reason"
         )
         .in_("status", ["new", "queued"])
         .eq("pecr_classification", "corporate")
@@ -447,6 +447,8 @@ def main():
         out_lines.append(f"- city: {row.get('city') or '-'}")
         out_lines.append(f"- website: {row.get('website') or '-'}")
         out_lines.append(f"- score: {row.get('score') or 0}")
+        out_lines.append(f"- lead_quality_score: {row.get('lead_quality_score') if row.get('lead_quality_score') is not None else '-'}")
+        out_lines.append(f"- lead_quality_reason: {row.get('lead_quality_reason') or '-'}")
         out_lines.append(f"- google_rating: {row.get('google_rating') or '-'}")
         out_lines.append(f"- review_count: {row.get('review_count') or 0}")
         out_lines.append(f"- outreach_angle: {angle}")

@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from dotenv import load_dotenv
@@ -108,6 +109,19 @@ CORPORATE_TYPES = {
 
 NAME_MATCH_THRESHOLD = 0.80
 ACTIVE_MATCH_MARGIN = 0.05
+FREE_EMAIL_DOMAINS = {
+    "gmail.com",
+    "googlemail.com",
+    "hotmail.com",
+    "outlook.com",
+    "live.com",
+    "icloud.com",
+    "me.com",
+    "yahoo.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+}
 
 
 def log_event(event: str, **fields):
@@ -193,6 +207,143 @@ def apply_downstream_lead_scope(query, niches: list[str] | None, created_after: 
         query = query.gte("created_at", created_after)
 
     return query
+
+
+def normalize_email(value: str | None) -> str:
+    return str(value or "").strip().lower().replace("mailto:", "")
+
+
+def email_domain(value: str | None) -> str:
+    email = normalize_email(value)
+    if "@" not in email:
+        return ""
+    return email.split("@", 1)[1].strip().lower().replace("www.", "")
+
+
+def website_domain(value: str | None) -> str:
+    url = str(value or "").strip()
+    if not url:
+        return ""
+
+    try:
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        return parsed.netloc.strip().lower().replace("www.", "")
+    except Exception:
+        return ""
+
+
+def is_free_email(value: str | None) -> bool:
+    return email_domain(value) in FREE_EMAIL_DOMAINS
+
+
+def domains_match(website: str | None, email: str | None) -> bool:
+    site_domain = website_domain(website)
+    mail_domain = email_domain(email)
+
+    if not site_domain or not mail_domain:
+        return True
+
+    return mail_domain == site_domain or mail_domain.endswith(f".{site_domain}")
+
+
+def parse_notes(notes: str | None) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+
+    for part in str(notes or "").split("|"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        parsed[key.strip()] = value.strip()
+
+    return parsed
+
+
+def parse_bool(value) -> bool | None:
+    if isinstance(value, bool):
+        return value
+
+    normalized = str(value or "").strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def parse_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def calculate_lead_quality(lead: dict, classification: dict) -> dict:
+    score = 0
+    reasons: list[str] = []
+
+    notes = parse_notes(lead.get("notes"))
+    website = str(lead.get("website") or "").strip()
+    email = normalize_email(lead.get("contact_email"))
+    diagnostics = classification.get("match_diagnostics") or {}
+    best_status = str(diagnostics.get("best_status") or "").strip().lower()
+
+    has_contact_form = parse_bool(lead.get("has_contact_form"))
+    if has_contact_form is None:
+        has_contact_form = parse_bool(notes.get("has_contact_form"))
+
+    has_live_chat = parse_bool(lead.get("has_live_chat"))
+    if has_live_chat is None:
+        has_live_chat = parse_bool(notes.get("has_live_chat"))
+
+    review_count = parse_int(lead.get("review_count"))
+
+    if classification.get("type") == "corporate":
+        score += 20
+        reasons.append("+20 active Ltd/corporate company")
+
+    if email:
+        free_email = is_free_email(email)
+        mismatch = bool(website and not free_email and not domains_match(website, email))
+
+        if not free_email and not mismatch:
+            score += 15
+            reasons.append("+15 business email")
+
+        if mismatch:
+            score -= 30
+            reasons.append("-30 domain mismatch")
+
+        if free_email:
+            score -= 10
+            reasons.append("-10 free email provider")
+
+    if has_contact_form is True and has_live_chat is False:
+        score += 15
+        reasons.append("+15 contact-form-only site")
+
+    if has_live_chat is False:
+        score += 20
+        reasons.append("+20 no live chat")
+
+    if review_count is not None and 20 <= review_count <= 500:
+        score += 15
+        reasons.append("+15 review count 20-500")
+
+    if website:
+        score += 10
+        reasons.append("+10 website present")
+    else:
+        score -= 15
+        reasons.append("-15 no website")
+
+    if best_status == "dissolved":
+        score -= 20
+        reasons.append("-20 dissolved company")
+
+    return {
+        "score": max(0, min(score, 100)),
+        "reason": "; ".join(reasons) if reasons else "No lead quality signals found",
+    }
 
 
 def run_python_script(script_name: str, *args: str):
@@ -691,7 +842,10 @@ def run_compliance_classification(
 
     query = (
         sb.table("leads")
-        .select("id, company_name, contact_email, niche, created_at")
+        .select(
+            "id, company_name, contact_email, website, notes, review_count, "
+            "has_contact_form, has_live_chat, niche, created_at"
+        )
         .is_("pecr_classification", "null")
         .not_.is_("contact_email", "null")
     )
@@ -734,6 +888,7 @@ def run_compliance_classification(
             continue
 
         result = classify_lead_via_companies_house_safe(business_name)
+        quality = calculate_lead_quality(lead, result)
         diagnostics = result.get("match_diagnostics") or {}
         best_status = str(diagnostics.get("best_status") or "").lower()
 
@@ -757,6 +912,8 @@ def run_compliance_classification(
                     "pecr_reason": result["reason"],
                     "company_number": result.get("company_number"),
                     "pecr_classified_at": datetime.now(timezone.utc).isoformat(),
+                    "lead_quality_score": quality["score"],
+                    "lead_quality_reason": quality["reason"],
                 }
             ).eq("id", lead_id).execute()
 
@@ -768,6 +925,8 @@ def run_compliance_classification(
                 business=business_name,
                 classification=result["type"],
                 reason=result["reason"],
+                lead_quality_score=quality["score"],
+                lead_quality_reason=quality["reason"],
             )
 
         except Exception as e:
