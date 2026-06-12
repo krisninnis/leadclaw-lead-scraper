@@ -80,9 +80,54 @@ def apply_lead_scope(query, niches: list[str] | None, created_after: str | None)
 # NEW DEMO-LED TEMPLATES
 # -----------------------------
 
+NICHE_CONTEXT = {
+    "plumber": (
+        "For plumbing businesses, missed calls while you're on jobs, "
+        "after-hours enquiries, and emergency callout requests can easily "
+        "arrive when nobody is free to reply."
+    ),
+    "electrician": (
+        "For electricians, it can help capture website visitors before they "
+        "leave, collect quote requests, and make callback capture easier when "
+        "you're on-site."
+    ),
+    "heating": (
+        "For heating engineers, boiler breakdowns, emergency heating enquiries, "
+        "and out-of-hours requests are often urgent, so a fast response path "
+        "matters."
+    ),
+    "roofer": (
+        "For roofing businesses, storm damage enquiries and quote requests can "
+        "come in quickly, and contact-form-only journeys can mean good leads "
+        "sit waiting."
+    ),
+    "estate_agent": (
+        "For estate agents, valuation requests and viewing enquiries are "
+        "time-sensitive, so lead response speed can make a real difference."
+    ),
+    "garage": (
+        "For garages, MOT bookings, service enquiries, and missed calls during "
+        "workshop hours can be hard to catch while the team is busy."
+    ),
+}
+
+NICHE_ALIASES = {
+    "plumbers": "plumber",
+    "electricians": "electrician",
+    "heating_engineer": "heating",
+    "heating_engineers": "heating",
+    "roofers": "roofer",
+    "roofing": "roofer",
+    "estate_agents": "estate_agent",
+    "estate agent": "estate_agent",
+    "estate agents": "estate_agent",
+    "garages": "garage",
+}
+
 TEMPLATE_NO_CHAT = (
     "Hi, I came across {business}{city_hint} and wanted to reach out.\n\n"
     "I'm building LeadClaw, a simple website assistant that helps small businesses capture enquiries when you're busy or out of hours, so fewer website visitors leave without getting in touch.\n\n"
+    "{niche_context}\n\n"
     "It's free to get started, with an optional paid plan later, and there's a no-obligation free trial as well.\n\n"
     "I put together a quick demo for your business here:\n"
     "{demo_url}\n\n"
@@ -104,6 +149,7 @@ TEMPLATE_NO_CHAT = (
 TEMPLATE_CONTACT_FORM_ONLY = (
     "Hi, I came across {business}{city_hint} and noticed the site relies mainly on a contact form.\n\n"
     "I'm building LeadClaw, a simple website assistant that helps small businesses capture and follow up on enquiries before visitors drop off, so you collect more contact details from the people already visiting your site.\n\n"
+    "{niche_context}\n\n"
     "It's free to get started, with an optional paid plan later, and there's a no-obligation free trial too.\n\n"
     "I put together a quick demo for your business here:\n"
     "{demo_url}\n\n"
@@ -125,6 +171,7 @@ TEMPLATE_CONTACT_FORM_ONLY = (
 TEMPLATE_WEAK_BOOKING = (
     "Hi, I came across {business}{city_hint} and noticed there may be some friction for people trying to get in touch or book.\n\n"
     "I'm building LeadClaw, a simple website assistant that helps small businesses capture missed enquiries and follow up automatically, so fewer leads slip through when you can't get to the phone.\n\n"
+    "{niche_context}\n\n"
     "It's free to get started, with an optional paid plan later, and there's a no-obligation free trial available.\n\n"
     "I put together a quick demo for your business here:\n"
     "{demo_url}\n\n"
@@ -240,6 +287,20 @@ def parse_int(value):
         return None
 
 
+def normalize_niche(value: str | None) -> str:
+    raw = str(value or "").strip().lower()
+    normalized = raw.replace("-", "_").replace(" ", "_")
+    return NICHE_ALIASES.get(normalized, normalized)
+
+
+def niche_context_for(row: dict) -> str:
+    niche = normalize_niche(row.get("niche"))
+    return NICHE_CONTEXT.get(
+        niche,
+        "For small service businesses, LeadClaw helps capture website enquiries and follow-up details when the team is busy.",
+    )
+
+
 def build_subject(angle, business):
     return f"Quick idea for {business}"
 
@@ -266,6 +327,7 @@ def choose_angle(row: dict):
     primary_cta = notes.get("primary_cta")
 
     lead_fit_score = parse_int(notes.get("lead_fit_score")) or 0
+    niche_context = niche_context_for(row)
 
     if notes_angle == "contact_form_only" or has_contact_form:
 
@@ -276,6 +338,7 @@ def choose_angle(row: dict):
         message = TEMPLATE_CONTACT_FORM_ONLY.format(
             business=business,
             city_hint=city_hint,
+            niche_context=niche_context,
             demo_url=demo_url,
             unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
         )
@@ -295,6 +358,7 @@ def choose_angle(row: dict):
         message = TEMPLATE_WEAK_BOOKING.format(
             business=business,
             city_hint=city_hint,
+            niche_context=niche_context,
             demo_url=demo_url,
             unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
         )
@@ -311,6 +375,7 @@ def choose_angle(row: dict):
     message = TEMPLATE_NO_CHAT.format(
         business=business,
         city_hint=city_hint,
+        niche_context=niche_context,
         demo_url=demo_url,
         unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
     )
@@ -377,6 +442,7 @@ def main():
 
         out_lines.append(f"## {index}. {business}")
         out_lines.append(f"- lead_id: {row.get('id')}")
+        out_lines.append(f"- niche: {row.get('niche') or '-'}")
         out_lines.append(f"- contact: {contact}")
         out_lines.append(f"- city: {row.get('city') or '-'}")
         out_lines.append(f"- website: {row.get('website') or '-'}")
