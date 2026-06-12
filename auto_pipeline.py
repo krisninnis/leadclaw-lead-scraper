@@ -107,6 +107,7 @@ CORPORATE_TYPES = {
 }
 
 NAME_MATCH_THRESHOLD = 0.80
+ACTIVE_MATCH_MARGIN = 0.05
 
 
 def log_event(event: str, **fields):
@@ -312,6 +313,35 @@ def name_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, ca, cb).ratio()
 
 
+def build_company_candidate(business_name: str, item: dict) -> dict:
+    title = str(item.get("title", "")).strip()
+    status = str(item.get("company_status", "")).strip().lower()
+    company_type = str(item.get("company_type", "")).strip().lower()
+    company_number = str(item.get("company_number", "")).strip()
+    confidence = name_similarity(business_name, title)
+
+    return {
+        "title": title,
+        "company_number": company_number,
+        "status": status,
+        "company_type": company_type,
+        "confidence": confidence,
+        "is_active": status == "active",
+        "is_corporate_type": company_type in CORPORATE_TYPES,
+    }
+
+
+def format_candidate(candidate: dict | None) -> str:
+    if not candidate:
+        return "N/A"
+
+    title = candidate.get("title") or "N/A"
+    number = candidate.get("company_number") or "N/A"
+    status = candidate.get("status") or "unknown"
+    confidence = float(candidate.get("confidence") or 0)
+    return f"{title} ({number}, status={status}, confidence={confidence:.0%})"
+
+
 def classify_lead_via_companies_house(business_name: str) -> dict:
     if not COMPANIES_HOUSE_API_KEY:
         return {
@@ -404,6 +434,240 @@ def classify_lead_via_companies_house(business_name: str) -> dict:
         }
 
 
+def classify_lead_via_companies_house_safe(business_name: str) -> dict:
+    if not COMPANIES_HOUSE_API_KEY:
+        return {
+            "type": "unknown",
+            "reason": "No Companies House API key configured",
+            "company_number": None,
+        }
+
+    try:
+        time.sleep(0.5)
+
+        resp = requests.get(
+            "https://api.company-information.service.gov.uk/search/companies",
+            params={"q": business_name, "items_per_page": 5},
+            auth=(COMPANIES_HOUSE_API_KEY, ""),
+            timeout=10,
+        )
+
+        if resp.status_code == 429:
+            log_event("companies_house_rate_limit", business=business_name)
+            time.sleep(60)
+            return classify_lead_via_companies_house_safe(business_name)
+
+        if resp.status_code != 200:
+            log_event(
+                "companies_house_error",
+                status=resp.status_code,
+                business=business_name,
+            )
+            return {
+                "type": "unknown",
+                "reason": f"API error {resp.status_code}",
+                "company_number": None,
+            }
+
+        candidates = [
+            build_company_candidate(business_name, item)
+            for item in resp.json().get("items", [])
+        ]
+        candidates.sort(key=lambda candidate: candidate["confidence"], reverse=True)
+
+        log_event(
+            "companies_house_candidates",
+            searched_company_name=business_name,
+            candidate_count=len(candidates),
+            candidates=[
+                {
+                    "title": candidate["title"],
+                    "company_number": candidate["company_number"],
+                    "status": candidate["status"],
+                    "company_type": candidate["company_type"],
+                    "confidence": round(candidate["confidence"], 4),
+                    "is_active": candidate["is_active"],
+                    "is_corporate_type": candidate["is_corporate_type"],
+                }
+                for candidate in candidates
+            ],
+        )
+
+        if not candidates:
+            return {
+                "type": "individual",
+                "reason": "No Companies House results - likely sole trader",
+                "company_number": None,
+                "match_diagnostics": {
+                    "searched_company_name": business_name,
+                    "candidate_count": 0,
+                },
+            }
+
+        best = candidates[0]
+        best_sim = float(best.get("confidence") or 0)
+        active_corporate_matches = [
+            candidate
+            for candidate in candidates
+            if candidate["is_active"]
+            and candidate["is_corporate_type"]
+            and candidate["confidence"] >= NAME_MATCH_THRESHOLD
+        ]
+        active_corporate_best = (
+            active_corporate_matches[0] if active_corporate_matches else None
+        )
+
+        if active_corporate_best:
+            active_close_to_best = (
+                best["is_active"]
+                or active_corporate_best["confidence"]
+                >= best["confidence"] - ACTIVE_MATCH_MARGIN
+            )
+
+            if active_close_to_best:
+                log_event(
+                    "companies_house_selected",
+                    searched_company_name=business_name,
+                    match_type="active_corporate",
+                    selected_title=active_corporate_best["title"],
+                    selected_company_number=active_corporate_best["company_number"],
+                    selected_status=active_corporate_best["status"],
+                    selected_confidence=round(
+                        active_corporate_best["confidence"], 4
+                    ),
+                    best_overall_title=best["title"],
+                    best_overall_status=best["status"],
+                    best_overall_confidence=round(best["confidence"], 4),
+                )
+
+                return {
+                    "type": "corporate",
+                    "reason": (
+                        f"Active {active_corporate_best['company_type'].upper()} - "
+                        f"{active_corporate_best['title']} "
+                        f"({active_corporate_best['company_number']}). "
+                        f"Similarity: {active_corporate_best['confidence']:.0%}"
+                    ),
+                    "company_number": active_corporate_best["company_number"],
+                    "match_diagnostics": {
+                        "searched_company_name": business_name,
+                        "best_status": best["status"],
+                        "best_company_number": best["company_number"],
+                        "best_confidence": best["confidence"],
+                        "selected_status": active_corporate_best["status"],
+                        "selected_company_number": active_corporate_best[
+                            "company_number"
+                        ],
+                        "selected_confidence": active_corporate_best["confidence"],
+                        "candidate_count": len(candidates),
+                        "active_alternative_company_number": active_corporate_best[
+                            "company_number"
+                        ],
+                    },
+                }
+
+            log_event(
+                "companies_house_active_match_rejected",
+                searched_company_name=business_name,
+                reason="active_match_not_close_enough_to_best_overall",
+                selected_title=active_corporate_best["title"],
+                selected_company_number=active_corporate_best["company_number"],
+                selected_status=active_corporate_best["status"],
+                selected_confidence=round(active_corporate_best["confidence"], 4),
+                best_overall_title=best["title"],
+                best_overall_status=best["status"],
+                best_overall_confidence=round(best["confidence"], 4),
+            )
+
+        if best_sim >= NAME_MATCH_THRESHOLD:
+            if not best["is_active"]:
+                log_event(
+                    "companies_house_selected",
+                    searched_company_name=business_name,
+                    match_type="non_active_best",
+                    selected_title=best["title"],
+                    selected_company_number=best["company_number"],
+                    selected_status=best["status"],
+                    selected_confidence=round(best["confidence"], 4),
+                    active_alternative_company_number=(
+                        active_corporate_best["company_number"]
+                        if active_corporate_best
+                        else None
+                    ),
+                    active_alternative_confidence=(
+                        round(active_corporate_best["confidence"], 4)
+                        if active_corporate_best
+                        else None
+                    ),
+                )
+
+                return {
+                    "type": "unknown",
+                    "reason": (
+                        f"Best Companies House match is not active: "
+                        f"{format_candidate(best)}. Manual review needed."
+                    ),
+                    "company_number": best["company_number"],
+                    "match_diagnostics": {
+                        "searched_company_name": business_name,
+                        "best_status": best["status"],
+                        "best_company_number": best["company_number"],
+                        "best_confidence": best["confidence"],
+                        "candidate_count": len(candidates),
+                        "active_alternative_company_number": (
+                            active_corporate_best["company_number"]
+                            if active_corporate_best
+                            else None
+                        ),
+                        "active_alternative_confidence": (
+                            active_corporate_best["confidence"]
+                            if active_corporate_best
+                            else None
+                        ),
+                    },
+                }
+
+            return {
+                "type": "unknown",
+                "reason": (
+                    f"Company type '{best['company_type']}' not clearly corporate "
+                    f"for {format_candidate(best)}. Manual review needed."
+                ),
+                "company_number": best["company_number"],
+                "match_diagnostics": {
+                    "searched_company_name": business_name,
+                    "best_status": best["status"],
+                    "best_company_number": best["company_number"],
+                    "best_confidence": best["confidence"],
+                    "candidate_count": len(candidates),
+                },
+            }
+
+        return {
+            "type": "unknown",
+            "reason": (
+                f"Best match {format_candidate(best)} below threshold. "
+                "Manual review."
+            ),
+            "company_number": None,
+            "match_diagnostics": {
+                "searched_company_name": business_name,
+                "best_status": best["status"],
+                "best_company_number": best["company_number"],
+                "best_confidence": best_sim,
+                "candidate_count": len(candidates),
+            },
+        }
+
+    except requests.RequestException as e:
+        log_event("companies_house_exception", error=str(e), business=business_name)
+        return {
+            "type": "unknown",
+            "reason": f"Request error: {e}",
+            "company_number": None,
+        }
+
+
 def run_compliance_classification(
     niches: list[str] | None = None,
     created_after: str | None = None,
@@ -440,7 +704,15 @@ def run_compliance_classification(
 
     log_event("compliance_start", count=len(unclassified))
 
-    stats = {"corporate": 0, "individual": 0, "unknown": 0, "errors": 0}
+    stats = {
+        "corporate": 0,
+        "individual": 0,
+        "unknown": 0,
+        "errors": 0,
+        "non_active_best_matches": 0,
+        "dissolved_best_matches": 0,
+        "non_active_best_with_active_alternative": 0,
+    }
 
     for lead in unclassified:
         lead_id = lead["id"]
@@ -461,7 +733,22 @@ def run_compliance_classification(
                 log_event("compliance_update_error", lead_id=lead_id, error=str(e))
             continue
 
-        result = classify_lead_via_companies_house(business_name)
+        result = classify_lead_via_companies_house_safe(business_name)
+        diagnostics = result.get("match_diagnostics") or {}
+        best_status = str(diagnostics.get("best_status") or "").lower()
+
+        if best_status and best_status != "active":
+            stats["non_active_best_matches"] += 1
+
+        if best_status == "dissolved":
+            stats["dissolved_best_matches"] += 1
+
+        if (
+            best_status
+            and best_status != "active"
+            and diagnostics.get("active_alternative_company_number")
+        ):
+            stats["non_active_best_with_active_alternative"] += 1
 
         try:
             sb.table("leads").update(
