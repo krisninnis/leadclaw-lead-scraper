@@ -109,12 +109,17 @@ This pipeline:
 For the first live phase, keep `OUTREACH_MIN_LEAD_QUALITY_SCORE=90` and the app
 daily cap at 1-5 emails.
 
+Set `BRIGHTFOUNDRY_URL` before generating reviewed live messages. The generator
+adds `source=leadclaw_outreach` to that URL unless the source parameter is
+already present.
+
 Required `.env` values for full automation:
 - `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`)
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `GOOGLE_PLACES_API_KEY` (optional; pipeline gracefully skips scraping if missing)
 - `OUTREACH_BASE_URL`
 - `OUTREACH_RUN_TOKEN`
+- `BRIGHTFOUNDRY_URL` (for the subtle studio link in reviewed outreach messages)
 - `FREE_TIER_MODE=1`
 - `SCRAPER_DAILY_NEW_CAP=40`
 - `OUTREACH_MIN_LEAD_QUALITY_SCORE=90`

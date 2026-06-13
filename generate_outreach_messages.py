@@ -20,6 +20,8 @@ DEMO_URL = os.getenv(
     "OUTREACH_DEMO_URL",
     "https://leadclaw-uk.vercel.app/demo?source=outreach",
 ).strip()
+BRIGHTFOUNDRY_URL = os.getenv("BRIGHTFOUNDRY_URL", "").strip().rstrip("/")
+BRIGHTFOUNDRY_URL_TODO = "TODO: set BRIGHTFOUNDRY_URL before live outreach"
 
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -76,6 +78,17 @@ def apply_lead_scope(query, niches: list[str] | None, created_after: str | None)
         query = query.gte("created_at", created_after)
 
     return query
+
+
+def brightfoundry_url_for_outreach() -> str:
+    if not BRIGHTFOUNDRY_URL:
+        return BRIGHTFOUNDRY_URL_TODO
+
+    if "source=" in BRIGHTFOUNDRY_URL:
+        return BRIGHTFOUNDRY_URL
+
+    separator = "&" if "?" in BRIGHTFOUNDRY_URL else "?"
+    return f"{BRIGHTFOUNDRY_URL}{separator}source=leadclaw_outreach"
 
 # -----------------------------
 # NEW DEMO-LED TEMPLATES
@@ -144,6 +157,8 @@ TEMPLATE_NO_CHAT = (
     "We found your business on Google Maps.\n"
     "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
     "Data rights: privacy@leadclaw.uk\n"
+    "LeadClaw is built by BrightFoundry, a small UK product studio building websites, AI assistants and automation for local businesses.\n"
+    "BrightFoundry: {brightfoundry_url}\n"
     "Unsubscribe: {unsubscribe_url}"
 )
 
@@ -166,6 +181,8 @@ TEMPLATE_CONTACT_FORM_ONLY = (
     "We found your business on Google Maps.\n"
     "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
     "Data rights: privacy@leadclaw.uk\n"
+    "LeadClaw is built by BrightFoundry, a small UK product studio building websites, AI assistants and automation for local businesses.\n"
+    "BrightFoundry: {brightfoundry_url}\n"
     "Unsubscribe: {unsubscribe_url}"
 )
 
@@ -188,6 +205,8 @@ TEMPLATE_WEAK_BOOKING = (
     "We found your business on Google Maps.\n"
     "Privacy policy: https://www.leadclaw.uk/legal/privacy\n"
     "Data rights: privacy@leadclaw.uk\n"
+    "LeadClaw is built by BrightFoundry, a small UK product studio building websites, AI assistants and automation for local businesses.\n"
+    "BrightFoundry: {brightfoundry_url}\n"
     "Unsubscribe: {unsubscribe_url}"
 )
 
@@ -345,6 +364,7 @@ def choose_angle(row: dict):
             city_hint=city_hint,
             niche_context=niche_context,
             demo_url=demo_url,
+            brightfoundry_url=brightfoundry_url_for_outreach(),
             unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
         )
 
@@ -365,6 +385,7 @@ def choose_angle(row: dict):
             city_hint=city_hint,
             niche_context=niche_context,
             demo_url=demo_url,
+            brightfoundry_url=brightfoundry_url_for_outreach(),
             unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
         )
 
@@ -382,6 +403,7 @@ def choose_angle(row: dict):
         city_hint=city_hint,
         niche_context=niche_context,
         demo_url=demo_url,
+        brightfoundry_url=brightfoundry_url_for_outreach(),
         unsubscribe_url = f"{APP_URL}/api/unsubscribe?email={normalize_email(row.get('contact_email'))}"
     )
 
@@ -446,6 +468,7 @@ def main():
     out_lines.append("")
     out_lines.append(f"Base URL: {APP_URL}")
     out_lines.append(f"Demo URL: {DEMO_URL}")
+    out_lines.append(f"BrightFoundry URL: {brightfoundry_url_for_outreach()}")
     out_lines.append(f"Total candidate leads: {len(raw_rows)}")
     out_lines.append(f"Filtered by quality score: {filtered_by_quality}")
     out_lines.append(f"Selected leads: {len(rows)}")
