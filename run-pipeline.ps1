@@ -1,28 +1,38 @@
 $ErrorActionPreference = 'Stop'
-$base = 'C:\Users\KRIS\.openclaw\workspace\lead-scraper-bot'
-$python = "$base\.venv\Scripts\python.exe"
-$logDir = 'C:\Users\KRIS\.openclaw\workspace\logs'
-if (!(Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
+
+$base = Split-Path -Parent $MyInvocation.MyCommand.Path
+$python = Join-Path $base '.venv\Scripts\python.exe'
+$logDir = Join-Path $base 'logs'
+
+if (!(Test-Path $logDir)) {
+  New-Item -ItemType Directory -Path $logDir | Out-Null
+}
 
 Push-Location $base
-$cmd = '"' + $python + '" auto_pipeline.py --limit 6 --cities London Manchester Birmingham Leeds Liverpool Bristol Nottingham Leicester Newcastle Sheffield --niches beauty aesthetics skin laser cosmetic 2>&1'
-$out = cmd /c $cmd
-$exit = $LASTEXITCODE
-Pop-Location
+
+try {
+  $cmd = '"' + $python + '" auto_pipeline.py --limit 6 --skip-outreach 2>&1'
+  $out = cmd /c $cmd
+  $exit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
 
 $joined = ($out -join ' ')
-$saved = ([regex]::Matches($joined, 'Saved\s+\d+\s+Google Places leads')).Count
-$dedupe = [regex]::Match($joined, 'duplicates_marked=(\d+)').Groups[1].Value
-$paused = [regex]::Match($joined, 'paused=(\d+)').Groups[1].Value
-$sent = [regex]::Match($joined, 'sentCount'':\s*(\d+)').Groups[1].Value
-if (-not $dedupe) { $dedupe = '0' }
-if (-not $paused) { $paused = '0' }
-if (-not $sent) { $sent = '0' }
+
+$saved = ([regex]::Matches($joined, 'Saved\s+\d+\s+leads')).Count
+$selected = [regex]::Match($joined, '"selected_for_message_generation":\s*(\d+)').Groups[1].Value
+$filtered = [regex]::Match($joined, '"filtered_by_quality_score":\s*(\d+)').Groups[1].Value
+
+if (-not $selected) { $selected = '0' }
+if (-not $filtered) { $filtered = '0' }
 
 if ($exit -eq 0) {
-  $line = "$(Get-Date -Format o) scraper pipeline ok jobs_saved=$saved dedupe=$dedupe paused=$paused outreach_sent=$sent"
+  $line = "$(Get-Date -Format o) scraper pipeline ok saved_events=$saved selected_messages=$selected filtered_by_quality=$filtered outreach_sent=0"
 } else {
   $line = "$(Get-Date -Format o) scraper pipeline error exit=$exit"
 }
 
 Add-Content -Path (Join-Path $logDir 'scraper-pipeline.log') -Value $line
+
+$out

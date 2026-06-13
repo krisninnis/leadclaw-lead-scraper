@@ -108,7 +108,42 @@ CORPORATE_TYPES = {
 }
 
 NAME_MATCH_THRESHOLD = 0.80
-ACTIVE_MATCH_MARGIN = 0.05
+ACTIVE_ALTERNATIVE_MIN_CONFIDENCE = 0.95
+GENERIC_BUSINESS_TERMS = {
+    "24",
+    "24hr",
+    "24hrs",
+    "247",
+    "best",
+    "boiler",
+    "boilers",
+    "callback",
+    "callout",
+    "callouts",
+    "cheap",
+    "day",
+    "electrician",
+    "electricians",
+    "electrical",
+    "emergency",
+    "engineer",
+    "engineers",
+    "garage",
+    "garages",
+    "heating",
+    "local",
+    "mot",
+    "plumber",
+    "plumbers",
+    "plumbing",
+    "roofer",
+    "roofers",
+    "roofing",
+    "same",
+    "service",
+    "services",
+    "trusted",
+}
 FREE_EMAIL_DOMAINS = {
     "gmail.com",
     "googlemail.com",
@@ -408,7 +443,10 @@ def run_generate_messages(
     run_python_script("generate_outreach_messages.py", *args)
 
 
-def trigger_outreach():
+def trigger_outreach(
+    niches: list[str] | None = None,
+    created_after: str | None = None,
+):
     if not OUTREACH_BASE_URL:
         log_event("outreach_trigger_skipped", reason="missing_outreach_base_url")
         return
@@ -422,10 +460,19 @@ def trigger_outreach():
         "Authorization": f"Bearer {OUTREACH_RUN_TOKEN}",
         "Content-Type": "application/json",
     }
+    body = {
+        "niches": niches or [],
+        "created_after": created_after,
+    }
 
-    log_event("outreach_trigger_start", url=url)
+    log_event(
+        "outreach_trigger_start",
+        url=url,
+        niches=niches,
+        created_after=created_after,
+    )
 
-    response = requests.post(url, headers=headers, timeout=180)
+    response = requests.post(url, headers=headers, json=body, timeout=180)
     response.raise_for_status()
 
     try:
@@ -451,6 +498,32 @@ def clean_name(name: str) -> str:
     cleaned = re.sub(r"^the\s+", "", cleaned)
     cleaned = re.sub(r"[^\w\s]", " ", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def location_tokens() -> set[str]:
+    tokens: set[str] = set()
+    for cities in CITY_POOLS.values():
+        for city in cities:
+            tokens.update(clean_name(city).split())
+    return tokens
+
+
+LOCATION_TOKENS = location_tokens()
+
+
+def is_generic_business_name(name: str) -> bool:
+    tokens = clean_name(name).split()
+    if not tokens:
+        return True
+
+    non_generic = [
+        token
+        for token in tokens
+        if token not in GENERIC_BUSINESS_TERMS and token not in LOCATION_TOKENS
+    ]
+    service_tokens = [token for token in tokens if token in GENERIC_BUSINESS_TERMS]
+
+    return bool(service_tokens) and not non_generic
 
 
 def name_similarity(a: str, b: str) -> float:
@@ -657,6 +730,35 @@ def classify_lead_via_companies_house_safe(business_name: str) -> dict:
 
         best = candidates[0]
         best_sim = float(best.get("confidence") or 0)
+
+        if is_generic_business_name(business_name):
+            log_event(
+                "companies_house_generic_name_blocked",
+                searched_company_name=business_name,
+                best_overall_title=best["title"],
+                best_overall_company_number=best["company_number"],
+                best_overall_status=best["status"],
+                best_overall_confidence=round(best["confidence"], 4),
+                candidate_count=len(candidates),
+            )
+
+            return {
+                "type": "unknown",
+                "reason": (
+                    "Generic service/location business name; Companies House "
+                    "match requires manual review."
+                ),
+                "company_number": None,
+                "match_diagnostics": {
+                    "searched_company_name": business_name,
+                    "best_status": best["status"],
+                    "best_company_number": best["company_number"],
+                    "best_confidence": best["confidence"],
+                    "candidate_count": len(candidates),
+                    "generic_name": True,
+                },
+            }
+
         active_corporate_matches = [
             candidate
             for candidate in candidates
@@ -671,8 +773,11 @@ def classify_lead_via_companies_house_safe(business_name: str) -> dict:
         if active_corporate_best:
             active_close_to_best = (
                 best["is_active"]
-                or active_corporate_best["confidence"]
-                >= best["confidence"] - ACTIVE_MATCH_MARGIN
+                or (
+                    active_corporate_best["confidence"]
+                    >= ACTIVE_ALTERNATIVE_MIN_CONFIDENCE
+                    and active_corporate_best["confidence"] >= best["confidence"]
+                )
             )
 
             if active_close_to_best:
@@ -720,7 +825,7 @@ def classify_lead_via_companies_house_safe(business_name: str) -> dict:
             log_event(
                 "companies_house_active_match_rejected",
                 searched_company_name=business_name,
-                reason="active_match_not_close_enough_to_best_overall",
+                reason="active_match_not_clearly_safer_than_best_overall",
                 selected_title=active_corporate_best["title"],
                 selected_company_number=active_corporate_best["company_number"],
                 selected_status=active_corporate_best["status"],
@@ -728,6 +833,7 @@ def classify_lead_via_companies_house_safe(business_name: str) -> dict:
                 best_overall_title=best["title"],
                 best_overall_status=best["status"],
                 best_overall_confidence=round(best["confidence"], 4),
+                active_alternative_min_confidence=ACTIVE_ALTERNATIVE_MIN_CONFIDENCE,
             )
 
         if best_sim >= NAME_MATCH_THRESHOLD:
@@ -1013,6 +1119,7 @@ def main():
     parser.add_argument("--skip-compliance", action="store_true")
     parser.add_argument("--skip-generate", action="store_true")
     parser.add_argument("--skip-outreach", action="store_true")
+    parser.add_argument("--send-outreach", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=4)
     parser.add_argument("--cities", nargs="+")
@@ -1027,7 +1134,8 @@ def main():
         ROTATING_CITY_BATCH_SIZE,
     )
     selected_niches = manual_niches or DEFAULT_NICHES
-    outreach_blocked = args.skip_outreach or args.dry_run
+    outreach_allowed = args.send_outreach and not args.skip_outreach and not args.dry_run
+    outreach_blocked = not outreach_allowed
     pipeline_started_at = datetime.now(timezone.utc).isoformat()
     downstream_isolated = manual_niches is not None
     downstream_niches = selected_niches if downstream_isolated else None
@@ -1039,7 +1147,9 @@ def main():
         selected_niches=selected_niches,
         requested_limit=args.limit,
         skip_outreach=args.skip_outreach,
+        send_outreach=args.send_outreach,
         dry_run=args.dry_run,
+        outreach_allowed=outreach_allowed,
         outreach_blocked=outreach_blocked,
         manual_cities_supplied=manual_cities is not None,
         manual_niches_supplied=manual_niches is not None,
@@ -1059,6 +1169,8 @@ def main():
             new24h=None,
             remaining_capacity=None,
             requested_limit=args.limit,
+            send_outreach=args.send_outreach,
+            outreach_allowed=outreach_allowed,
             outreach_blocked=outreach_blocked,
             downstream_isolated=downstream_isolated,
             downstream_niches=downstream_niches,
@@ -1084,7 +1196,9 @@ def main():
         skip_compliance=args.skip_compliance,
         skip_generate=args.skip_generate,
         skip_outreach=args.skip_outreach,
+        send_outreach=args.send_outreach,
         dry_run=args.dry_run,
+        outreach_allowed=outreach_allowed,
         requested_limit=args.limit,
         outreach_base_url=OUTREACH_BASE_URL,
         outreach_token_present=bool(OUTREACH_RUN_TOKEN),
@@ -1144,10 +1258,15 @@ def main():
         run_generate_messages(downstream_niches, downstream_created_after)
 
     if outreach_blocked:
-        reason = "dry_run_flag" if args.dry_run else "skip_outreach_flag"
+        if args.dry_run:
+            reason = "dry_run_flag"
+        elif args.skip_outreach:
+            reason = "skip_outreach_flag"
+        else:
+            reason = "send_outreach_not_set"
         log_event("outreach_trigger_skipped", reason=reason)
     else:
-        trigger_outreach()
+        trigger_outreach(downstream_niches, downstream_created_after)
 
     log_event(
         "pipeline_finish",

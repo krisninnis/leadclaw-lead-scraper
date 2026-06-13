@@ -24,6 +24,7 @@ DEMO_URL = os.getenv(
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_FILE = OUTPUT_DIR / "OUTREACH_MESSAGES_TODAY.md"
+MIN_LEAD_QUALITY_SCORE = int(os.getenv("OUTREACH_MIN_LEAD_QUALITY_SCORE", "90"))
 
 EMAIL_RE = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.I)
 
@@ -423,7 +424,8 @@ def main():
     quality_rows = [
         row
         for row in raw_rows
-        if lead_quality_score(row) is not None and lead_quality_score(row) >= 70
+        if lead_quality_score(row) is not None
+        and lead_quality_score(row) >= MIN_LEAD_QUALITY_SCORE
     ]
     rows = [r for r in quality_rows if has_valid_contact(r)][:30]
     filtered_by_quality = len(raw_rows) - len(quality_rows)
@@ -433,7 +435,7 @@ def main():
         total_candidate_leads=len(raw_rows),
         filtered_by_quality_score=filtered_by_quality,
         selected_for_message_generation=len(rows),
-        minimum_lead_quality_score=70,
+        minimum_lead_quality_score=MIN_LEAD_QUALITY_SCORE,
     )
 
     out_lines = []

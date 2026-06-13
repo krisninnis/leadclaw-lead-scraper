@@ -73,6 +73,10 @@ and always pass `--skip-outreach`:
 `--skip-outreach` runs scrape + enrich + compliance + message generation but
 **does not** trigger the outreach endpoint, so no emails are sent.
 
+Live outreach also requires the explicit positive flag `--send-outreach`. If
+`--send-outreach` is omitted, the pipeline logs `send_outreach_not_set` and does
+not call the outreach endpoint.
+
 > ⚠️ **Do not run live outreach for a newly enabled niche until the first
 > generated message batch has been manually reviewed in Supabase.** Trades and
 > other non-beauty niches are config-only for now and are intentionally NOT in
@@ -86,18 +90,24 @@ and always pass `--skip-outreach`:
 
 ## Fully automated pipeline (scrape -> dedupe -> outreach)
 ```bash
-.venv\Scripts\python auto_pipeline.py --limit 4 --cities London Manchester --niches beauty
+.venv\Scripts\python auto_pipeline.py --limit 4 --cities London Manchester --niches beauty --skip-outreach
 ```
 
 Options:
 - `--skip-scrape` (dedupe + outreach only)
-- `--skip-outreach` (scrape + dedupe only)
+- `--skip-outreach` (hard block; never calls the outreach endpoint)
+- `--send-outreach` (required before the outreach endpoint can be called)
 - `--dedupe-hours 72`
 
 This pipeline:
 1. Runs `places_batch.py`
 2. Marks duplicate leads as `status=duplicate` (website > email > company+city key)
-3. Triggers app outreach endpoint (`/api/outreach/run`)
+3. Generates reviewable outreach messages in `output/OUTREACH_MESSAGES_TODAY.md`
+4. Calls the app outreach endpoint (`/api/outreach/run`) only when
+   `--send-outreach` is supplied and `--skip-outreach`/`--dry-run` are absent
+
+For the first live phase, keep `OUTREACH_MIN_LEAD_QUALITY_SCORE=90` and the app
+daily cap at 1-5 emails.
 
 Required `.env` values for full automation:
 - `SUPABASE_URL` (or `NEXT_PUBLIC_SUPABASE_URL`)
@@ -107,6 +117,7 @@ Required `.env` values for full automation:
 - `OUTREACH_RUN_TOKEN`
 - `FREE_TIER_MODE=1`
 - `SCRAPER_DAILY_NEW_CAP=40`
+- `OUTREACH_MIN_LEAD_QUALITY_SCORE=90`
 
 Windows scheduled runner:
 ```powershell
